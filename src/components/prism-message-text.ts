@@ -12,16 +12,31 @@ export class PrismMessageText extends LitElement {
   @property({ type: Boolean })
   shouldRenderMarkdown = false;
 
+  @property({ type: String })
+  maxHeight = '100vh';
+
   render() {
     if (this.shouldRenderMarkdown) {
       return html`
-        <div class="message-text rendered" data-mode="markdown">
+        <div
+          class="message-text rendered"
+          data-mode="markdown"
+          style=${`--prism-message-max-height: ${this.maxHeight};`}
+        >
           ${unsafeHTML(renderMarkdown(this.text))}
         </div>
       `;
     }
 
-    return html`<div class="message-text plain" data-mode="plain">${this.text}</div>`;
+    return html`
+      <div
+        class="message-text plain"
+        data-mode="plain"
+        style=${`--prism-message-max-height: ${this.maxHeight};`}
+      >
+        ${this.text}
+      </div>
+    `;
   }
 
   static styles = css`
@@ -34,6 +49,8 @@ export class PrismMessageText extends LitElement {
       color: inherit;
       line-height: 1.5;
       word-break: break-word;
+      max-height: var(--prism-message-max-height, 100vh);
+      overflow: auto;
     }
 
     .plain {

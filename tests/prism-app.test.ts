@@ -70,8 +70,13 @@ const mountApp = async () => {
   return app;
 };
 
-const getTimeline = (app: PrismApp) =>
-  app.shadowRoot?.querySelector('prism-timeline') as HTMLElement;
+const getTimelines = (app: PrismApp) =>
+  [...(app.shadowRoot?.querySelectorAll('prism-timeline') ?? [])] as HTMLElement[];
+
+const getTimeline = (app: PrismApp, index = 0) => getTimelines(app)[index] as HTMLElement;
+
+const getConversationContainers = (app: PrismApp) =>
+  app.shadowRoot?.querySelectorAll('.conversation-container') ?? [];
 
 const openActionsMenu = async (app: PrismApp) => {
   const button = app.shadowRoot?.querySelector(
@@ -92,14 +97,46 @@ const openPreferences = async (app: PrismApp) => {
   return app.shadowRoot?.querySelector('prism-preference-panel') as HTMLElement;
 };
 
-const openShareMenu = async (app: PrismApp) => {
-  const timeline = getTimeline(app);
+const expandFocusMode = async (panel: HTMLElement) => {
+  const toggle = panel.shadowRoot?.querySelector(
+    'button[name="toggleFocusModeSection"]'
+  ) as HTMLButtonElement;
+  toggle.click();
+  await (panel as HTMLElement & { updateComplete: Promise<unknown> }).updateComplete;
+  return panel;
+};
+
+const getFocusChip = (
+  panel: HTMLElement,
+  name: 'focusAuthor' | 'focusRecipient' | 'focusContentType',
+  value: string
+) =>
+  panel.shadowRoot?.querySelector(
+    `button[name="${name}"][value="${value}"]`
+  ) as HTMLButtonElement;
+
+const clickFocusChip = async (
+  panel: HTMLElement,
+  chip: HTMLButtonElement,
+  options?: { shiftKey?: boolean }
+) => {
+  chip.dispatchEvent(
+    new MouseEvent('click', {
+      bubbles: true,
+      shiftKey: options?.shiftKey ?? false
+    })
+  );
+  await (panel as HTMLElement & { updateComplete: Promise<unknown> }).updateComplete;
+};
+
+const openShareMenu = async (app: PrismApp, index = 0) => {
+  const timeline = getTimeline(app, index);
   const button = timeline.shadowRoot?.querySelector(
     'button[name="toggleShareMenu"]'
   ) as HTMLButtonElement;
   button.click();
   await app.updateComplete;
-  return getTimeline(app);
+  return getTimeline(app, index);
 };
 
 describe('prism-app', () => {
@@ -123,7 +160,7 @@ describe('prism-app', () => {
 
     expect(rootText).toContain('Claude Session Viewer');
     expect(rootText).toContain('main-session.jsonl');
-    expect(rootText).toContain('Session ID');
+    expect(rootText).toContain('Conversations');
     expect(rootText).not.toContain('Pending Files None');
     expect(
       loader?.querySelector('button[name="loadStagedFiles"]')
@@ -275,7 +312,7 @@ describe('prism-app', () => {
     expect(rootTextAfterLoad).toContain('main-session.jsonl');
   });
 
-  test('nests preferences under the combined actions button', async () => {
+  test('opens preferences as a separate popover from the actions menu', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
@@ -301,11 +338,31 @@ describe('prism-app', () => {
       'prism-preference-panel'
     ) as HTMLElement | null;
     expect(panel).not.toBeNull();
+    expect(app.shadowRoot?.querySelector('.actions-menu')).toBeNull();
     expect(panel?.shadowRoot?.textContent ?? '').toContain('Message Labels');
-    expect(panel?.shadowRoot?.textContent ?? '').not.toContain('Preferences');
+    expect(panel?.shadowRoot?.textContent ?? '').toContain('Preferences');
   });
 
-  test('focus mode hides messages behind placeholders instead of deleting them', async () => {
+  test('dismisses the preference popover on outside click', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+
+    expect(await openPreferences(app)).not.toBeNull();
+
+    document.body.click();
+    await app.updateComplete;
+
+    expect(app.shadowRoot?.querySelector('prism-preference-panel')).toBeNull();
+  });
+
+  test('closes the preference popover from its close button', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
@@ -317,66 +374,208 @@ describe('prism-app', () => {
     await app.updateComplete;
 
     const panel = await openPreferences(app);
-    const assistant = panel.shadowRoot?.querySelector(
-      'input[name="focusAuthor"][value="assistant"]'
-    ) as HTMLInputElement;
-    assistant.click();
+    const closeButton = panel.shadowRoot?.querySelector(
+      'button[name="closePreferences"]'
+    ) as HTMLButtonElement;
+
+    closeButton.click();
     await app.updateComplete;
-    await new Promise(resolve => setTimeout(resolve, 0));
 
-    const timeline = getTimeline(app);
-    const hiddenMessages = timeline.shadowRoot?.querySelectorAll(
-      'prism-message-hidden'
-    );
-    const visibleMessages = timeline.shadowRoot?.querySelectorAll(
-      'prism-message-card[data-role="assistant"]'
-    );
-
-    expect(hiddenMessages && hiddenMessages.length).toBeGreaterThan(0);
-    expect(hiddenMessages?.[0]?.shadowRoot?.textContent ?? '').toContain(
-      'Show'
-    );
-    expect(visibleMessages && visibleMessages.length).toBeGreaterThan(0);
+    expect(app.shadowRoot?.querySelector('prism-preference-panel')).toBeNull();
   });
 
-  test('filters to multiple content types through the preference panel', async () => {
+  test('allows dragging the preference popover by its header', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
       {
-        name: 'subagent-session.jsonl',
-        text: fixture('subagent-session.jsonl')
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
       }
     ]);
     await app.updateComplete;
 
     const panel = await openPreferences(app);
-    const toolCall = panel.shadowRoot?.querySelector(
-      'input[name="focusContentType"][value="tool_call"]'
-    ) as HTMLInputElement;
-    const toolResult = panel.shadowRoot?.querySelector(
-      'input[name="focusContentType"][value="tool_result"]'
-    ) as HTMLInputElement;
-    toolCall.click();
-    toolResult.click();
+    const header = panel.shadowRoot?.querySelector('.header') as HTMLElement;
+    const windowElement = panel.shadowRoot?.querySelector(
+      '.preference-window'
+    ) as HTMLElement;
+
+    header.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        clientX: 20,
+        clientY: 30
+      })
+    );
+    document.dispatchEvent(
+      new MouseEvent('mousemove', {
+        bubbles: true,
+        clientX: 65,
+        clientY: 90
+      })
+    );
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    await panel.updateComplete;
+
+    expect(windowElement.style.transform).toContain('translate(45px, 60px)');
+  });
+
+  test('applies max message height modes from preferences to message cards', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'markdown-session.jsonl',
+        text: markdownSession
+      }
+    ]);
     await app.updateComplete;
-    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const panel = await openPreferences(app);
+    const noLimit = panel.shadowRoot?.querySelector(
+      'input[name="maxMessageHeightMode"][value="no-limit"]'
+    ) as HTMLInputElement;
+    noLimit.click();
+    await app.updateComplete;
 
     const timeline = getTimeline(app);
-    const messageKinds = timeline.shadowRoot?.querySelectorAll(
-      'prism-message-card[data-channel]'
-    );
-    expect(messageKinds && messageKinds.length).toBeGreaterThan(0);
+    const card = timeline.shadowRoot?.querySelector(
+      'prism-message-card'
+    ) as HTMLElement & { maxMessageHeight?: string };
+
+    expect(card.maxMessageHeight).toBe('none');
+
+    const customMode = panel.shadowRoot?.querySelector(
+      'input[name="maxMessageHeightMode"][value="custom"]'
+    ) as HTMLInputElement;
+    customMode.click();
+    await app.updateComplete;
+
+    const maxMessageHeight = panel.shadowRoot?.querySelector(
+      'input[name="customMessageHeight"]'
+    ) as HTMLInputElement;
+    maxMessageHeight.value = '300';
+    maxMessageHeight.dispatchEvent(new Event('input', { bubbles: true }));
+    await app.updateComplete;
+
+    expect(card.maxMessageHeight).toBe('300px');
+    expect(panel.shadowRoot?.textContent ?? '').toContain('Custom Height (300px)');
+  });
+
+  test('switches conversation layout between list and grid and syncs grid width to the URL', async () => {
+    window.history.replaceState({}, '', '/');
+
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      },
+      {
+        name: 'secondary-session.jsonl',
+        text: fixture('secondary-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+
+    const panel = await openPreferences(app);
+    const gridMode = panel.shadowRoot?.querySelector(
+      'input[name="layoutMode"][value="grid"]'
+    ) as HTMLInputElement;
+    gridMode.click();
+    await app.updateComplete;
+
+    const gridWidth = panel.shadowRoot?.querySelector(
+      'input[name="gridColumnWidth"]'
+    ) as HTMLInputElement;
+    gridWidth.value = '373';
+    gridWidth.dispatchEvent(new Event('input', { bubbles: true }));
+    await app.updateComplete;
+
+    const conversationList = app.shadowRoot?.querySelector(
+      '.conversation-list'
+    ) as HTMLElement | null;
+    const timelines = getTimelines(app);
+    const containers = getConversationContainers(app);
+
+    expect(timelines.length).toBe(2);
+    expect(containers.length).toBe(2);
+    expect(conversationList?.getAttribute('data-layout')).toBe('grid');
+    expect(new URL(window.location.href).searchParams.get('grid')).toBe('373');
+
+    const listMode = panel.shadowRoot?.querySelector(
+      'input[name="layoutMode"][value="list"]'
+    ) as HTMLInputElement;
+    listMode.click();
+    await app.updateComplete;
+
+    expect(conversationList?.getAttribute('data-layout')).toBe('list');
+    expect(new URL(window.location.href).searchParams.get('grid')).toBeNull();
+  });
+
+  test('renders one full timeline per loaded jsonl file', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      },
+      {
+        name: 'secondary-session.jsonl',
+        text: fixture('secondary-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+
+    const containers = [...getConversationContainers(app)] as HTMLElement[];
+    const timelines = getTimelines(app);
+
+    expect(timelines).toHaveLength(2);
+    expect(containers).toHaveLength(2);
+    expect(containers[0]?.textContent ?? '').toContain('main-session.jsonl');
+    expect(containers[1]?.textContent ?? '').toContain('secondary-session.jsonl');
+  });
+
+  test('keeps previously loaded conversations when loading another jsonl later', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+
+    await app.ingestFiles([
+      {
+        name: 'secondary-session.jsonl',
+        text: fixture('secondary-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+
+    const containers = [...getConversationContainers(app)] as HTMLElement[];
+    const timelines = getTimelines(app);
+
+    expect(timelines).toHaveLength(2);
+    expect(containers).toHaveLength(2);
     expect(
-      [...(messageKinds ?? [])].every(node =>
-        ['tool_call', 'tool_result'].includes(
-          node.getAttribute('data-channel') ?? ''
-        )
+      containers.some(container =>
+        (container.textContent ?? '').includes('main-session.jsonl')
+      )
+    ).toBe(true);
+    expect(
+      containers.some(container =>
+        (container.textContent ?? '').includes('secondary-session.jsonl')
       )
     ).toBe(true);
   });
 
-  test('supports selecting multiple author roles at once', async () => {
+  test('focus chips support include and exclude states with click and shift-click', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
@@ -387,16 +586,127 @@ describe('prism-app', () => {
     ]);
     await app.updateComplete;
 
-    const panel = await openPreferences(app);
-    const assistant = panel.shadowRoot?.querySelector(
-      'input[name="focusAuthor"][value="assistant"]'
-    ) as HTMLInputElement;
-    const tool = panel.shadowRoot?.querySelector(
-      'input[name="focusAuthor"][value="tool"]'
-    ) as HTMLInputElement;
-    assistant.click();
-    tool.click();
+    const panel = await expandFocusMode(await openPreferences(app));
+    const assistant = getFocusChip(panel, 'focusAuthor', 'assistant');
+    const thinking = getFocusChip(panel, 'focusContentType', 'thinking');
+
+    await clickFocusChip(panel, assistant);
+    expect(assistant.getAttribute('data-state')).toBe('include');
+
+    await clickFocusChip(panel, thinking, { shiftKey: true });
+    expect(thinking.getAttribute('data-state')).toBe('exclude');
+
+    await clickFocusChip(panel, thinking, { shiftKey: true });
+    expect(thinking.getAttribute('data-state')).toBe('neutral');
+
+    expect(panel.shadowRoot?.textContent ?? '').toContain('author: +assistant');
+  });
+
+  test('non-strict focus expands included messages and folds all non-included messages', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      }
+    ]);
     await app.updateComplete;
+
+    const panel = await expandFocusMode(await openPreferences(app));
+    const assistant = getFocusChip(panel, 'focusAuthor', 'assistant');
+    const thinking = getFocusChip(panel, 'focusContentType', 'thinking');
+    await clickFocusChip(panel, assistant);
+    await clickFocusChip(panel, thinking, { shiftKey: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const timeline = getTimeline(app);
+    const visibleMessages = timeline.shadowRoot?.querySelectorAll(
+      'prism-message-card[data-role]'
+    );
+    const foldedMessages = timeline.shadowRoot?.querySelectorAll(
+      'prism-message-hidden'
+    );
+    const foldedThinking = [...(foldedMessages ?? [])].filter(
+      node =>
+        (node.shadowRoot?.textContent ?? '').includes('thinking') ||
+        (node.shadowRoot?.textContent ?? '').includes('Show thinking message')
+    );
+    const visibleThinking = timeline.shadowRoot?.querySelectorAll(
+      'prism-message-card[data-channel="thinking"]'
+    );
+
+    expect(
+      [...(visibleMessages ?? [])].every(
+        node => node.getAttribute('data-role') === 'assistant'
+      )
+    ).toBe(true);
+    expect(foldedMessages && foldedMessages.length).toBeGreaterThan(0);
+    expect(foldedThinking.length).toBeGreaterThan(0);
+    expect(visibleThinking?.length ?? 0).toBe(0);
+  });
+
+  test('strict focus keeps only included messages after exclude rules are applied', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+
+    const panel = await expandFocusMode(await openPreferences(app));
+    const assistant = getFocusChip(panel, 'focusAuthor', 'assistant');
+    const thinking = getFocusChip(panel, 'focusContentType', 'thinking');
+    await clickFocusChip(panel, assistant);
+    await clickFocusChip(panel, thinking, { shiftKey: true });
+
+    const strictFocus = panel.shadowRoot?.querySelector(
+      'input[name="strictFocus"]'
+    ) as HTMLInputElement;
+    strictFocus.click();
+    await app.updateComplete;
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const timeline = getTimeline(app);
+    const visibleMessages = timeline.shadowRoot?.querySelectorAll(
+      'prism-message-card[data-role]'
+    );
+    const foldedMessages = timeline.shadowRoot?.querySelectorAll(
+      'prism-message-hidden'
+    );
+    const visibleThinking = timeline.shadowRoot?.querySelectorAll(
+      'prism-message-card[data-channel="thinking"]'
+    );
+
+    expect(visibleMessages && visibleMessages.length).toBeGreaterThan(0);
+    expect(
+      [...(visibleMessages ?? [])].every(
+        node => node.getAttribute('data-role') === 'assistant'
+      )
+    ).toBe(true);
+    expect(foldedMessages?.length ?? 0).toBe(0);
+    expect(visibleThinking?.length ?? 0).toBe(0);
+  });
+
+  test('supports selecting multiple include values for a focus field', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+
+    const panel = await expandFocusMode(await openPreferences(app));
+    const assistant = getFocusChip(panel, 'focusAuthor', 'assistant');
+    const tool = getFocusChip(panel, 'focusAuthor', 'tool');
+    await clickFocusChip(panel, assistant);
+    await clickFocusChip(panel, tool);
     await new Promise(resolve => setTimeout(resolve, 0));
 
     const timeline = getTimeline(app);
@@ -409,17 +719,9 @@ describe('prism-app', () => {
         node => ['assistant', 'tool'].includes(node.getAttribute('data-role') ?? '')
       )
     ).toBe(true);
-    expect(
-      [...(messages ?? [])].some(
-        node => node.getAttribute('data-role') === 'assistant'
-      )
-    ).toBe(true);
-    expect(
-      [...(messages ?? [])].some(node => node.getAttribute('data-role') === 'tool')
-    ).toBe(true);
   });
 
-  test('filters by recipient from the preference panel', async () => {
+  test('filters by recipient from focus chips', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
@@ -430,12 +732,9 @@ describe('prism-app', () => {
     ]);
     await app.updateComplete;
 
-    const panel = await openPreferences(app);
-    const bash = panel.shadowRoot?.querySelector(
-      'input[name="focusRecipient"][value="Bash"]'
-    ) as HTMLInputElement;
-    bash.click();
-    await app.updateComplete;
+    const panel = await expandFocusMode(await openPreferences(app));
+    const bash = getFocusChip(panel, 'focusRecipient', 'Bash');
+    await clickFocusChip(panel, bash);
     await new Promise(resolve => setTimeout(resolve, 0));
 
     const timeline = getTimeline(app);
@@ -450,7 +749,7 @@ describe('prism-app', () => {
     ).toBe(true);
   });
 
-  test('recipient options hide internal UUID-like identifiers', async () => {
+  test('recipient focus chips hide internal UUID-like identifiers', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
@@ -461,13 +760,13 @@ describe('prism-app', () => {
     ]);
     await app.updateComplete;
 
-    const panel = await openPreferences(app);
-    const recipientInputs = [
+    const panel = await expandFocusMode(await openPreferences(app));
+    const recipientButtons = [
       ...(panel.shadowRoot?.querySelectorAll(
-        'input[name="focusRecipient"]'
+        'button[name="focusRecipient"]'
       ) ?? [])
-    ] as HTMLInputElement[];
-    const values = recipientInputs.map(input => input.value);
+    ] as HTMLButtonElement[];
+    const values = recipientButtons.map(input => input.value);
 
     expect(values).toContain('Bash');
     expect(values).toContain('Grep');
@@ -480,19 +779,23 @@ describe('prism-app', () => {
     ).toBe(false);
   });
 
-  test('updates the metadata panel when a message is selected', async () => {
+  test('updates the metadata panel when a message is selected from another conversation', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
       {
         name: 'main-session.jsonl',
         text: fixture('main-session.jsonl')
+      },
+      {
+        name: 'secondary-session.jsonl',
+        text: fixture('secondary-session.jsonl')
       }
     ]);
     await app.updateComplete;
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    const timeline = getTimeline(app);
+    const timeline = getTimeline(app, 1);
     const toggleMetadata = timeline.shadowRoot?.querySelector(
       'button[name="toggleMetadata"]'
     ) as HTMLButtonElement;
@@ -507,6 +810,9 @@ describe('prism-app', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     const metadataPanel = app.shadowRoot?.querySelector('prism-metadata-panel');
+    expect(metadataPanel?.shadowRoot?.textContent ?? '').toContain(
+      '73ce5455-964d-4bf0-9351-19d85151938c'
+    );
     expect(metadataPanel?.shadowRoot?.textContent ?? '').toContain('"type"');
   });
 

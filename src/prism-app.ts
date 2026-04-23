@@ -9,7 +9,14 @@ import {
 import './components/prism-metadata-panel';
 import './components/prism-preference-panel';
 import './components/prism-timeline';
+import {
+  clampGridColumnWidth,
+  createDefaultFocusModeSettings,
+  createDefaultViewSettings
+} from './components/prism-preference-panel';
 import type {
+  PrismFocusBucket,
+  PrismFocusChipState,
   PrismFocusModeSettings,
   PrismViewSettings
 } from './components/prism-preference-panel';
@@ -33,6 +40,25 @@ const INTERNAL_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const INTERNAL_TOOL_ID_PATTERN = /^toolu_[a-z0-9]+$/i;
+type PrismFocusClassification = 'include' | 'neutral' | 'exclude';
+
+interface LoadedConversationRecord {
+  key: string;
+  fileName: string;
+  fileText: string;
+  conversation: NormalizedConversation;
+  parseResult: ClaudeSessionParseResult;
+}
+
+interface SelectedMessageRef {
+  conversationKey: string;
+  messageId: string;
+}
+
+interface ConversationActionStatus {
+  conversationKey: string;
+  message: string;
+}
 
 @customElement('prism-app')
 export class PrismApp extends LitElement {
@@ -46,10 +72,10 @@ export class PrismApp extends LitElement {
   private detectionLabel = 'No file loaded';
 
   @state()
-  private conversation: NormalizedConversation | null = null;
+  private loadedConversations: LoadedConversationRecord[] = [];
 
   @state()
-  private parseResult: ClaudeSessionParseResult | null = null;
+  private selectedMessageRef: SelectedMessageRef | null = null;
 
   @state()
   private metaSummary: ClaudeMetaSummary | null = null;
@@ -58,26 +84,20 @@ export class PrismApp extends LitElement {
   private metaOnly = false;
 
   @state()
-  private selectedMessageId: string | null = null;
+  private metadataConversationKey: string | null = null;
 
   @state()
   private showActionsMenu = false;
 
   @state()
-  private showPreferenceDetails = false;
+  private showPreferencePanel = false;
 
   @state()
-  private focusModeSettings: PrismFocusModeSettings = {
-    author: [],
-    recipient: [],
-    contentType: [],
-    strictFocus: false
-  };
+  private focusModeSettings: PrismFocusModeSettings =
+    createDefaultFocusModeSettings();
 
   @state()
-  private viewSettings: PrismViewSettings = {
-    showAbsoluteTimestamp: false
-  };
+  private viewSettings: PrismViewSettings = createDefaultViewSettings();
 
   @state()
   private renderMarkdown = false;
@@ -86,70 +106,61 @@ export class PrismApp extends LitElement {
   private sidechainOnly = false;
 
   @state()
-  private conversationActionStatus: string | null = null;
+  private conversationActionStatus: ConversationActionStatus | null = null;
 
   @state()
-  private showConversationMetadata = false;
+  private shareMenuConversationKey: string | null = null;
 
   @state()
-  private showShareMenu = false;
-
-  @state()
-  private focusModeExemptedMessageIds: string[] = [];
-
-  private loadedSessionText: string | null = null;
+  private focusModeExemptedMessageKeys: string[] = [];
 
   async ingestFiles(files: LoadedTextFile[]): Promise<void> {
     this.stagedFiles = [];
-    this.loadedFileNames = files.map(file => file.name);
-    this.focusModeSettings = {
-      author: [],
-      recipient: [],
-      contentType: [],
-      strictFocus: false
-    };
-    this.viewSettings = {
-      showAbsoluteTimestamp: false
-    };
+    this.focusModeSettings = createDefaultFocusModeSettings();
     this.renderMarkdown = false;
     this.sidechainOnly = false;
     this.conversationActionStatus = null;
-    this.showConversationMetadata = false;
-    this.showShareMenu = false;
-    this.focusModeExemptedMessageIds = [];
-    this.loadedSessionText = null;
+    this.metadataConversationKey = null;
+    this.shareMenuConversationKey = null;
+    this.focusModeExemptedMessageKeys = [];
     this.showActionsMenu = false;
-    this.showPreferenceDetails = false;
+    this.showPreferencePanel = false;
 
-    let sessionLines: unknown[] | null = null;
-    let meta: unknown = null;
+    const parsedMetaFiles = files
+      .filter(file => file.name.endsWith('.meta.json'))
+      .map(file => ({
+        name: file.name,
+        raw: this.#safeParseJSON(file.text)
+      }))
+      .filter(
+        (file): file is { name: string; raw: Record<string, unknown> } =>
+          file.raw !== null && typeof file.raw === 'object'
+      );
+    const parsedSessions = this.#parseConversationFiles(files, parsedMetaFiles);
 
-    for (const file of files) {
-      if (file.name.endsWith('.meta.json')) {
-        meta = this.#safeParseJSON(file.text);
-        continue;
-      }
-
-      if (file.name.endsWith('.jsonl')) {
-        sessionLines = this.#parseJSONLText(file.text);
-        this.loadedSessionText = file.text;
-      }
-    }
-
-    this.metaSummary = meta ? parseClaudeMeta(meta) : null;
-
-    if (sessionLines && isClaudeSessionJSONL(sessionLines)) {
-      this.parseResult = parseClaudeSession(sessionLines, meta ?? undefined);
-      this.conversation = this.parseResult?.conversation ?? null;
-      this.selectedMessageId = null;
+    if (parsedSessions.length > 0) {
+      this.loadedConversations = this.#mergeLoadedConversations(parsedSessions);
+      this.loadedFileNames = [
+        ...new Set([
+          ...this.loadedFileNames,
+          ...files.map(file => file.name)
+        ])
+      ];
+      this.metaSummary = null;
+      this.selectedMessageRef = null;
       this.detectionLabel = 'Claude session JSONL';
       this.metaOnly = false;
       return;
     }
 
-    this.conversation = null;
-    this.parseResult = null;
-    this.selectedMessageId = null;
+    this.loadedConversations = [];
+    this.selectedMessageRef = null;
+    this.metadataConversationKey = null;
+    this.shareMenuConversationKey = null;
+    this.loadedFileNames = files.map(file => file.name);
+    this.metaSummary = parsedMetaFiles[0]
+      ? parseClaudeMeta(parsedMetaFiles[0].raw)
+      : null;
 
     if (this.metaSummary) {
       this.detectionLabel = 'Claude meta JSON';
@@ -162,22 +173,24 @@ export class PrismApp extends LitElement {
   }
 
   render() {
-    const baseMessages = this.#getTimelineMessages();
-    const strictFocus = this.focusModeSettings.strictFocus;
-    const timelineMessages = strictFocus
-      ? baseMessages.filter(
-          message => !this.#isMessageHiddenByFocusMode(message)
-        )
-      : baseMessages;
-    const hiddenMessageIds = strictFocus
-      ? []
-      : timelineMessages
-          .filter(message => this.#isMessageHiddenByFocusMode(message))
-          .map(message => message.id);
-    const selectedMessage =
-      this.conversation?.messages.find(
-        message => message.id === this.selectedMessageId
-      ) ?? null;
+    const totalMessages = this.loadedConversations.reduce(
+      (count, entry) => count + entry.parseResult.stats.totalMessages,
+      0
+    );
+    const totalToolCalls = this.loadedConversations.reduce(
+      (count, entry) => count + entry.parseResult.stats.toolCalls,
+      0
+    );
+    const totalEvents = this.loadedConversations.reduce(
+      (count, entry) => count + entry.parseResult.stats.eventMessages,
+      0
+    );
+    const sidebarConversationRecord = this.#getSidebarConversationRecord();
+    const sidebarConversation = sidebarConversationRecord?.conversation ?? null;
+    const sidebarSelectedMessage =
+      this.metadataConversationKey === null
+        ? null
+        : this.#getSelectedMessageForConversation(this.metadataConversationKey);
 
     return html`
       <div class="app">
@@ -234,26 +247,27 @@ export class PrismApp extends LitElement {
                           class="menu-item submenu-toggle"
                           type="button"
                           name="togglePreferencesMenu"
-                          aria-expanded=${this.showPreferenceDetails}
+                          aria-haspopup="dialog"
+                          aria-expanded=${this.showPreferencePanel}
                           @click=${this.#handlePreferenceDetailsToggle}
                         >
                           <span>Preferences</span>
                         </button>
-                        ${this.showPreferenceDetails
-                          ? html`
-                              <prism-preference-panel
-                                inline
-                                .availableAuthors=${this.#availableAuthors()}
-                                .availableRecipients=${this.#availableRecipients()}
-                                .availableContentTypes=${this.#availableContentTypes()}
-                                .settings=${this.focusModeSettings}
-                                .viewSettings=${this.viewSettings}
-                                @prism-focus-mode-change=${this.#handleFocusModeChange}
-                                @prism-view-settings-change=${this.#handleViewSettingsChange}
-                              ></prism-preference-panel>
-                            `
-                          : nothing}
                       </div>
+                    `
+                  : nothing}
+                ${this.showPreferencePanel
+                  ? html`
+                      <prism-preference-panel
+                        .availableAuthors=${this.#availableAuthors()}
+                        .availableRecipients=${this.#availableRecipients()}
+                        .availableContentTypes=${this.#availableContentTypes()}
+                        .settings=${this.focusModeSettings}
+                        .viewSettings=${this.viewSettings}
+                        @prism-request-close=${this.#handlePreferenceClose}
+                        @prism-focus-mode-change=${this.#handleFocusModeChange}
+                        @prism-view-settings-change=${this.#handleViewSettingsChange}
+                      ></prism-preference-panel>
                     `
                   : nothing}
               </div>
@@ -283,30 +297,30 @@ export class PrismApp extends LitElement {
                   `
                 : nothing}
 
-              ${this.conversation
+              ${this.loadedConversations.length > 0
                 ? html`
                     <div class="metrics-row">
                       <span class="metric">
-                        <strong>${this.conversation.sessionId ?? 'Unknown'}</strong>
-                        <small>Session ID</small>
+                        <strong>${this.loadedConversations.length}</strong>
+                        <small>Conversations</small>
                       </span>
                       <span class="metric">
-                        <strong>${this.parseResult?.stats.totalMessages ?? 0}</strong>
+                        <strong>${totalMessages}</strong>
                         <small>Messages</small>
                       </span>
                       <span class="metric">
-                        <strong>${this.parseResult?.stats.toolCalls ?? 0}</strong>
+                        <strong>${totalToolCalls}</strong>
                         <small>Tool Calls</small>
                       </span>
                       <span class="metric">
-                        <strong>${this.parseResult?.stats.eventMessages ?? 0}</strong>
+                        <strong>${totalEvents}</strong>
                         <small>Events</small>
                       </span>
                     </div>
                   `
                 : nothing}
 
-              ${this.conversation
+              ${this.loadedConversations.length > 0
                 ? html`
                     <div class="filters">
                       <label class="checkbox">
@@ -322,6 +336,72 @@ export class PrismApp extends LitElement {
                         >${this.#getFilterSummary()}</span
                       >
                     </div>
+                `
+                : nothing}
+
+              ${this.loadedConversations.length > 0
+                ? html`
+                    <div class="conversation-list-header">
+                      <div class="empty-title">
+                        ${this.loadedConversations.length} total conversations
+                      </div>
+                    </div>
+                    <div
+                      class="conversation-list"
+                      data-layout=${this.viewSettings.layoutMode}
+                      style=${`--prism-grid-column-width: ${this.viewSettings.gridColumnWidth}px;`}
+                    >
+                      ${this.loadedConversations.map((entry, index) => {
+                        const baseMessages = this.#getTimelineMessages(entry);
+                        const timelineMessages = baseMessages.filter(
+                          message => !this.#isMessageRemovedByFocusMode(message)
+                        );
+                        const hiddenMessageIds = timelineMessages
+                          .filter(message =>
+                            this.#isMessageFoldedByFocusMode(entry.key, message)
+                          )
+                          .map(message => message.id);
+                        const selectedMessageId =
+                          this.selectedMessageRef?.conversationKey === entry.key
+                            ? this.selectedMessageRef.messageId
+                            : null;
+
+                        return html`
+                          <section
+                            class="conversation-container"
+                            id=${`conversation-${index}`}
+                          >
+                            <div class="conversation-container-meta">
+                              <span class="conversation-index">#${index}</span>
+                              <span class="conversation-file">${entry.fileName}</span>
+                            </div>
+                            <prism-timeline
+                              .conversation=${entry.conversation}
+                              .messages=${timelineMessages}
+                              .hiddenMessageIds=${hiddenMessageIds}
+                              .selectedMessageId=${selectedMessageId}
+                              .renderMarkdown=${this.renderMarkdown}
+                              .showAbsoluteTimestamp=${this.viewSettings.showAbsoluteTimestamp}
+                              .maxMessageHeight=${this.#resolveMaxMessageHeight()}
+                              .actionStatus=${this.conversationActionStatus?.conversationKey ===
+                              entry.key
+                                ? this.conversationActionStatus.message
+                                : null}
+                              .showShareMenu=${this.shareMenuConversationKey === entry.key}
+                              @prism-select-message=${(
+                                event: CustomEvent<{ messageId: string }>
+                              ) => this.#handleMessageSelect(entry.key, event)}
+                              @prism-reveal-message=${(
+                                event: CustomEvent<{ messageId: string }>
+                              ) => this.#handleRevealMessage(entry.key, event)}
+                              @prism-conversation-action=${(
+                                event: CustomEvent<PrismConversationAction>
+                              ) => this.#handleConversationAction(entry.key, event)}
+                            ></prism-timeline>
+                          </section>
+                        `;
+                      })}
+                    </div>
                   `
                 : nothing}
             </section>
@@ -336,50 +416,73 @@ export class PrismApp extends LitElement {
                 `
               : nothing}
 
-            ${this.conversation
-              ? html`
-                  <prism-timeline
-                    .conversation=${this.conversation}
-                    .messages=${timelineMessages}
-                    .hiddenMessageIds=${hiddenMessageIds}
-                    .selectedMessageId=${this.selectedMessageId}
-                    .renderMarkdown=${this.renderMarkdown}
-                    .showAbsoluteTimestamp=${this.viewSettings.showAbsoluteTimestamp}
-                    .actionStatus=${this.conversationActionStatus}
-                    .showShareMenu=${this.showShareMenu}
-                    @prism-select-message=${this.#handleMessageSelect}
-                    @prism-reveal-message=${this.#handleRevealMessage}
-                    @prism-conversation-action=${this.#handleConversationAction}
-                  ></prism-timeline>
-                `
-              : nothing}
           </section>
 
           <aside
             class="content-right"
-            ?is-hidden=${!this.metaOnly && !this.showConversationMetadata}
+            ?is-hidden=${!this.metaOnly && this.metadataConversationKey === null}
           >
             <prism-metadata-panel
               title=${this.metaOnly
                 ? 'Meta Summary'
-                : !this.showConversationMetadata
+                : this.metadataConversationKey === null
                   ? 'Metadata'
-                  : selectedMessage
+                  : sidebarSelectedMessage
                   ? 'Metadata'
                   : 'Conversation Metadata'}
               .data=${this.metaOnly
                 ? this.metaSummary?.raw ?? null
-                : this.showConversationMetadata
-                  ? selectedMessage?.raw ?? this.conversation?.metadata ?? null
+                : this.metadataConversationKey !== null
+                  ? sidebarSelectedMessage?.raw ?? sidebarConversation?.metadata ?? null
                   : null}
-              .conversation=${this.conversation}
-              .stats=${this.parseResult?.stats ?? null}
-              .warnings=${this.parseResult?.warnings ?? []}
+              .conversation=${sidebarConversation}
+              .stats=${sidebarConversationRecord?.parseResult.stats ?? null}
+              .warnings=${sidebarConversationRecord?.parseResult.warnings ?? []}
             ></prism-metadata-panel>
           </aside>
         </div>
       </div>
     `;
+  }
+
+  #parseConversationFiles(
+    files: LoadedTextFile[],
+    parsedMetaFiles: Array<{ name: string; raw: Record<string, unknown> }>
+  ): LoadedConversationRecord[] {
+    const parsedMetaByStem = new Map(
+      parsedMetaFiles.map(file => [this.#baseFileName(file.name), file.raw])
+    );
+    const fallbackMeta =
+      files.filter(file => file.name.endsWith('.jsonl')).length === 1 &&
+      parsedMetaFiles.length === 1
+        ? parsedMetaFiles[0]?.raw
+        : undefined;
+
+    return files
+      .filter(file => file.name.endsWith('.jsonl'))
+      .flatMap(file => {
+        const sessionLines = this.#parseJSONLText(file.text);
+        if (!isClaudeSessionJSONL(sessionLines)) {
+          return [];
+        }
+
+        const matchedMeta =
+          parsedMetaByStem.get(this.#baseFileName(file.name)) ?? fallbackMeta;
+        const parseResult = parseClaudeSession(sessionLines, matchedMeta);
+        if (!parseResult) {
+          return [];
+        }
+
+        return [
+          {
+            key: this.#getConversationKey(file.name, parseResult.conversation),
+            fileName: file.name,
+            fileText: file.text,
+            conversation: parseResult.conversation,
+            parseResult
+          }
+        ];
+      });
   }
 
   #parseJSONLText(text: string): unknown[] {
@@ -404,12 +507,82 @@ export class PrismApp extends LitElement {
     }
   }
 
-  #getTimelineMessages(): NormalizedMessage[] {
-    if (!this.conversation) {
-      return [];
+  #baseFileName(name: string): string {
+    return name.replace(/\.meta\.json$/u, '').replace(/\.jsonl$/u, '');
+  }
+
+  #getConversationKey(
+    fileName: string,
+    conversation: NormalizedConversation
+  ): string {
+    return conversation.sessionId ?? `${fileName}:${conversation.id}`;
+  }
+
+  #mergeLoadedConversations(
+    incomingConversations: LoadedConversationRecord[]
+  ): LoadedConversationRecord[] {
+    const mergedConversations = [...this.loadedConversations];
+
+    for (const incomingConversation of incomingConversations) {
+      const existingIndex = mergedConversations.findIndex(
+        conversation => conversation.key === incomingConversation.key
+      );
+
+      if (existingIndex === -1) {
+        mergedConversations.push(incomingConversation);
+        continue;
+      }
+
+      mergedConversations.splice(existingIndex, 1, incomingConversation);
     }
 
-    return this.conversation.messages.filter(message => {
+    return mergedConversations;
+  }
+
+  #getConversationRecord(
+    conversationKey: string | null
+  ): LoadedConversationRecord | null {
+    if (!conversationKey) {
+      return null;
+    }
+
+    return (
+      this.loadedConversations.find(
+        conversation => conversation.key === conversationKey
+      ) ?? null
+    );
+  }
+
+  #getSidebarConversationRecord(): LoadedConversationRecord | null {
+    return (
+      this.#getConversationRecord(this.metadataConversationKey) ??
+      this.loadedConversations[0] ??
+      null
+    );
+  }
+
+  #getSelectedMessageForConversation(
+    conversationKey: string
+  ): NormalizedMessage | null {
+    if (this.selectedMessageRef?.conversationKey !== conversationKey) {
+      return null;
+    }
+
+    return (
+      this.#getConversationRecord(conversationKey)?.conversation.messages.find(
+        message => message.id === this.selectedMessageRef?.messageId
+      ) ?? null
+    );
+  }
+
+  #getMessageRefKey(conversationKey: string, messageId: string): string {
+    return `${conversationKey}:${messageId}`;
+  }
+
+  #getTimelineMessages(
+    conversationRecord: LoadedConversationRecord
+  ): NormalizedMessage[] {
+    return conversationRecord.conversation.messages.filter(message => {
       if (this.sidechainOnly && !message.isSidechain) {
         return false;
       }
@@ -418,30 +591,107 @@ export class PrismApp extends LitElement {
     });
   }
 
-  #isMessageHiddenByFocusMode(message: NormalizedMessage): boolean {
-    if (this.focusModeExemptedMessageIds.includes(message.id)) {
+  #hasActiveFocusFilters(): boolean {
+    const { author, recipient, contentType } = this.focusModeSettings;
+    return (
+      author.include.length > 0 ||
+      author.exclude.length > 0 ||
+      recipient.include.length > 0 ||
+      recipient.exclude.length > 0 ||
+      contentType.include.length > 0 ||
+      contentType.exclude.length > 0
+    );
+  }
+
+  #hasActiveFocusIncludes(): boolean {
+    const { author, recipient, contentType } = this.focusModeSettings;
+    return (
+      author.include.length > 0 ||
+      recipient.include.length > 0 ||
+      contentType.include.length > 0
+    );
+  }
+
+  #matchesFocusValue<T extends string>(
+    bucket: PrismFocusBucket<T>,
+    value: string | undefined,
+    state: Exclude<PrismFocusChipState, 'neutral'>
+  ): boolean {
+    if (!value) {
+      return false;
+    }
+
+    return bucket[state].includes(value as T);
+  }
+
+  #matchesAllActiveIncludes(message: NormalizedMessage): boolean {
+    const checks: boolean[] = [];
+    const { author, recipient, contentType } = this.focusModeSettings;
+
+    if (author.include.length > 0) {
+      checks.push(author.include.includes(message.role));
+    }
+    if (recipient.include.length > 0) {
+      checks.push(
+        Boolean(
+          message.recipient && recipient.include.includes(message.recipient)
+        )
+      );
+    }
+    if (contentType.include.length > 0) {
+      checks.push(contentType.include.includes(message.channel));
+    }
+
+    return checks.every(Boolean);
+  }
+
+  #classifyMessageByFocusMode(
+    message: NormalizedMessage
+  ): PrismFocusClassification {
+    if (!this.#hasActiveFocusFilters()) {
+      return 'include';
+    }
+
+    const { author, recipient, contentType } = this.focusModeSettings;
+    const isExcluded =
+      author.exclude.includes(message.role) ||
+      this.#matchesFocusValue(recipient, message.recipient, 'exclude') ||
+      contentType.exclude.includes(message.channel);
+
+    if (isExcluded) {
+      return 'exclude';
+    }
+
+    if (!this.#hasActiveFocusIncludes()) {
+      return 'include';
+    }
+
+    return this.#matchesAllActiveIncludes(message) ? 'include' : 'neutral';
+  }
+
+  #isMessageFoldedByFocusMode(
+    conversationKey: string,
+    message: NormalizedMessage
+  ): boolean {
+    if (this.focusModeSettings.strictFocus) {
       return false;
     }
 
     if (
-      this.focusModeSettings.author.length > 0 &&
-      !this.focusModeSettings.author.includes(message.role)
+      this.focusModeExemptedMessageKeys.includes(
+        this.#getMessageRefKey(conversationKey, message.id)
+      )
     ) {
-      return true;
+      return false;
     }
 
-    if (
-      this.focusModeSettings.contentType.length > 0 &&
-      !this.focusModeSettings.contentType.includes(message.channel)
-    ) {
-      return true;
-    }
+    return this.#classifyMessageByFocusMode(message) !== 'include';
+  }
 
-    if (
-      this.focusModeSettings.recipient.length > 0 &&
-      (!message.recipient ||
-        !this.focusModeSettings.recipient.includes(message.recipient))
-    ) {
+  #isMessageRemovedByFocusMode(message: NormalizedMessage): boolean {
+    const classification = this.#classifyMessageByFocusMode(message);
+
+    if (this.focusModeSettings.strictFocus && classification !== 'include') {
       return true;
     }
 
@@ -449,14 +699,20 @@ export class PrismApp extends LitElement {
   }
 
   #availableAuthors(): PrismRole[] {
-    return [...new Set(this.conversation?.messages.map(message => message.role) ?? [])]
-      .sort();
+    return [
+      ...new Set(
+        this.loadedConversations.flatMap(entry =>
+          entry.conversation.messages.map(message => message.role)
+        )
+      )
+    ].sort();
   }
 
   #availableRecipients(): string[] {
     return [
       ...new Set(
-        this.conversation?.messages
+        this.loadedConversations
+          .flatMap(entry => entry.conversation.messages)
           .map(message => message.recipient)
           .filter((recipient): recipient is string => {
             if (typeof recipient !== 'string') {
@@ -475,22 +731,33 @@ export class PrismApp extends LitElement {
   #availableContentTypes(): PrismChannel[] {
     return [
       ...new Set(
-        this.conversation?.messages.map(message => message.channel) ?? []
+        this.loadedConversations.flatMap(entry =>
+          entry.conversation.messages.map(message => message.channel)
+        )
       )
     ].sort() as PrismChannel[];
   }
 
   #getFilterSummary(): string {
     const parts: string[] = [];
-    if (this.focusModeSettings.author.length > 0) {
-      parts.push(`author: ${this.focusModeSettings.author.join(', ')}`);
+    const fieldSummaries: Array<[string, PrismFocusBucket<string>]> = [
+      ['author', this.focusModeSettings.author as PrismFocusBucket<string>],
+      ['recipient', this.focusModeSettings.recipient as PrismFocusBucket<string>],
+      ['type', this.focusModeSettings.contentType as PrismFocusBucket<string>]
+    ];
+
+    for (const [label, bucket] of fieldSummaries) {
+      const includePart =
+        bucket.include.length > 0 ? `+${bucket.include.join(', +')}` : '';
+      const excludePart =
+        bucket.exclude.length > 0 ? `-${bucket.exclude.join(', -')}` : '';
+      const summary = [includePart, excludePart].filter(Boolean).join(', ');
+
+      if (summary) {
+        parts.push(`${label}: ${summary}`);
+      }
     }
-    if (this.focusModeSettings.recipient.length > 0) {
-      parts.push(`recipient: ${this.focusModeSettings.recipient.join(', ')}`);
-    }
-    if (this.focusModeSettings.contentType.length > 0) {
-      parts.push(`type: ${this.focusModeSettings.contentType.join(', ')}`);
-    }
+
     if (this.focusModeSettings.strictFocus) {
       parts.push('strict');
     }
@@ -546,14 +813,15 @@ export class PrismApp extends LitElement {
   #handleActionsToggle(event: Event): void {
     event.stopPropagation();
     this.showActionsMenu = !this.showActionsMenu;
-    if (!this.showActionsMenu) {
-      this.showPreferenceDetails = false;
+    if (this.showActionsMenu) {
+      this.showPreferencePanel = false;
     }
   }
 
   #handlePreferenceDetailsToggle(event: Event): void {
     event.stopPropagation();
-    this.showPreferenceDetails = !this.showPreferenceDetails;
+    this.showPreferencePanel = !this.showPreferencePanel;
+    this.showActionsMenu = false;
   }
 
   async #handleLoadStagedFiles(): Promise<void> {
@@ -565,26 +833,60 @@ export class PrismApp extends LitElement {
   }
 
   #handleDocumentClick = (event: MouseEvent): void => {
-    if (!this.showActionsMenu) {
-      return;
-    }
     const path = event.composedPath();
     const menu = this.renderRoot.querySelector('.actions-menu');
     const toggle = this.renderRoot.querySelector('.action-toggle');
-    if (menu && path.includes(menu)) {
-      return;
+    const preferencePanel = this.renderRoot.querySelector('prism-preference-panel');
+
+    if (
+      this.showActionsMenu &&
+      !((menu && path.includes(menu)) || (toggle && path.includes(toggle)))
+    ) {
+      this.showActionsMenu = false;
     }
-    if (toggle && path.includes(toggle)) {
-      return;
+
+    if (
+      this.showPreferencePanel &&
+      !(
+        (preferencePanel && path.includes(preferencePanel)) ||
+        (toggle && path.includes(toggle))
+      )
+    ) {
+      this.showPreferencePanel = false;
     }
-    this.showActionsMenu = false;
-    this.showPreferenceDetails = false;
   };
 
   #handleKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && this.showActionsMenu) {
+    if (
+      event.key === 'Escape' &&
+      (this.showActionsMenu || this.showPreferencePanel)
+    ) {
       this.showActionsMenu = false;
-      this.showPreferenceDetails = false;
+      this.showPreferencePanel = false;
+    }
+  };
+
+  #handleFocusIn = (event: FocusEvent): void => {
+    const path = event.composedPath();
+    const menu = this.renderRoot.querySelector('.actions-menu');
+    const toggle = this.renderRoot.querySelector('.action-toggle');
+    const preferencePanel = this.renderRoot.querySelector('prism-preference-panel');
+
+    if (
+      this.showActionsMenu &&
+      !((menu && path.includes(menu)) || (toggle && path.includes(toggle)))
+    ) {
+      this.showActionsMenu = false;
+    }
+
+    if (
+      this.showPreferencePanel &&
+      !(
+        (preferencePanel && path.includes(preferencePanel)) ||
+        (toggle && path.includes(toggle))
+      )
+    ) {
+      this.showPreferencePanel = false;
     }
   };
 
@@ -595,44 +897,107 @@ export class PrismApp extends LitElement {
   #stageFiles(files: LoadedTextFile[]): void {
     this.stagedFiles = files;
     this.showActionsMenu = false;
-    this.showPreferenceDetails = false;
-    this.conversationActionStatus = `Staged ${files.length} file${files.length === 1 ? '' : 's'} for loading`;
+    this.showPreferencePanel = false;
+    this.conversationActionStatus = null;
   }
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.viewSettings = this.#readViewSettingsFromLocation();
     document.addEventListener('click', this.#handleDocumentClick);
     document.addEventListener('keydown', this.#handleKeydown);
+    document.addEventListener('focusin', this.#handleFocusIn);
   }
 
   disconnectedCallback(): void {
     document.removeEventListener('click', this.#handleDocumentClick);
     document.removeEventListener('keydown', this.#handleKeydown);
+    document.removeEventListener('focusin', this.#handleFocusIn);
     super.disconnectedCallback();
   }
 
   #handleFocusModeChange(event: CustomEvent<PrismFocusModeSettings>): void {
     this.focusModeSettings = event.detail;
+    this.focusModeExemptedMessageKeys = [];
   }
 
   #handleViewSettingsChange(event: CustomEvent<PrismViewSettings>): void {
     this.viewSettings = event.detail;
+    this.#syncViewSettingsToLocation();
   }
 
-  #handleMessageSelect(event: CustomEvent<{ messageId: string }>): void {
-    this.selectedMessageId = event.detail.messageId;
+  #handlePreferenceClose(): void {
+    this.showPreferencePanel = false;
   }
 
-  #handleRevealMessage(event: CustomEvent<{ messageId: string }>): void {
-    this.focusModeExemptedMessageIds = [
+  #resolveMaxMessageHeight(): string {
+    switch (this.viewSettings.maxMessageHeightMode) {
+      case 'no-limit':
+        return 'none';
+      case 'custom':
+        return `${this.viewSettings.customMaxMessageHeight}px`;
+      case 'automatic':
+      default:
+        return '100vh';
+    }
+  }
+
+  #readViewSettingsFromLocation(): PrismViewSettings {
+    const nextSettings = createDefaultViewSettings();
+    const gridParam = new URL(window.location.href).searchParams.get('grid');
+    if (!gridParam) {
+      return nextSettings;
+    }
+
+    const parsedGridWidth = Number.parseInt(gridParam, 10);
+    if (Number.isNaN(parsedGridWidth)) {
+      return nextSettings;
+    }
+
+    return {
+      ...nextSettings,
+      layoutMode: 'grid',
+      gridColumnWidth: clampGridColumnWidth(parsedGridWidth)
+    };
+  }
+
+  #syncViewSettingsToLocation(): void {
+    const url = new URL(window.location.href);
+
+    if (this.viewSettings.layoutMode === 'grid') {
+      url.searchParams.set('grid', String(this.viewSettings.gridColumnWidth));
+    } else {
+      url.searchParams.delete('grid');
+    }
+
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, '', nextUrl || '/');
+  }
+
+  #handleMessageSelect(
+    conversationKey: string,
+    event: CustomEvent<{ messageId: string }>
+  ): void {
+    this.selectedMessageRef = {
+      conversationKey,
+      messageId: event.detail.messageId
+    };
+  }
+
+  #handleRevealMessage(
+    conversationKey: string,
+    event: CustomEvent<{ messageId: string }>
+  ): void {
+    this.focusModeExemptedMessageKeys = [
       ...new Set([
-        ...this.focusModeExemptedMessageIds,
-        event.detail.messageId
+        ...this.focusModeExemptedMessageKeys,
+        this.#getMessageRefKey(conversationKey, event.detail.messageId)
       ])
     ];
   }
 
   async #handleConversationAction(
+    conversationKey: string,
     event: CustomEvent<PrismConversationAction>
   ): Promise<void> {
     switch (event.detail) {
@@ -640,87 +1005,123 @@ export class PrismApp extends LitElement {
         this.renderMarkdown = !this.renderMarkdown;
         break;
       case 'toggleMetadata':
-        this.showConversationMetadata = !this.showConversationMetadata;
+        if (this.metadataConversationKey === conversationKey) {
+          this.metadataConversationKey = null;
+        } else {
+          this.metadataConversationKey = conversationKey;
+        }
+        if (this.selectedMessageRef?.conversationKey !== conversationKey) {
+          this.selectedMessageRef = null;
+        }
         break;
       case 'toggleShareMenu':
-        this.showShareMenu = !this.showShareMenu;
+        this.shareMenuConversationKey =
+          this.shareMenuConversationKey === conversationKey
+            ? null
+            : conversationKey;
         break;
       case 'translateConversation':
-        this.conversationActionStatus = 'Translation API not configured';
+        this.#setConversationActionStatus(
+          conversationKey,
+          'Translation API not configured'
+        );
         break;
       case 'copyShareableUrl':
-        await this.#copyShareableUrl();
-        this.showShareMenu = false;
+        await this.#copyShareableUrl(conversationKey);
+        this.shareMenuConversationKey = null;
         break;
       case 'copyConversationJson':
-        await this.#copyConversationJson();
-        this.showShareMenu = false;
+        await this.#copyConversationJson(conversationKey);
+        this.shareMenuConversationKey = null;
         break;
       case 'downloadConversation':
-        this.#downloadConversation();
-        this.showShareMenu = false;
+        this.#downloadConversation(conversationKey);
+        this.shareMenuConversationKey = null;
         break;
       case 'openRenderView':
-        this.#openRenderView();
-        this.showShareMenu = false;
+        this.#openRenderView(conversationKey);
+        this.shareMenuConversationKey = null;
         break;
       default:
         break;
     }
   }
 
-  async #copyShareableUrl(): Promise<void> {
-    if (!this.conversation) {
+  #setConversationActionStatus(
+    conversationKey: string,
+    message: string
+  ): void {
+    this.conversationActionStatus = { conversationKey, message };
+  }
+
+  async #copyShareableUrl(conversationKey: string): Promise<void> {
+    const conversationRecord = this.#getConversationRecord(conversationKey);
+    if (!conversationRecord) {
       return;
     }
 
-    const shareableUrl = `${window.location.href.split('#')[0]}#session=${this.conversation.sessionId ?? this.conversation.id}`;
-    await this.#writeToClipboard(shareableUrl, 'Shareable URL copied');
+    const shareableUrl = `${window.location.href.split('#')[0]}#session=${conversationRecord.conversation.sessionId ?? conversationRecord.conversation.id}`;
+    await this.#writeToClipboard(
+      shareableUrl,
+      'Shareable URL copied',
+      conversationKey
+    );
   }
 
-  async #copyConversationJson(): Promise<void> {
-    if (!this.conversation) {
+  async #copyConversationJson(conversationKey: string): Promise<void> {
+    const conversationRecord = this.#getConversationRecord(conversationKey);
+    if (!conversationRecord) {
       return;
     }
 
     await this.#writeToClipboard(
-      JSON.stringify(this.conversation, null, 2),
-      'Conversation JSON copied'
+      JSON.stringify(conversationRecord.conversation, null, 2),
+      'Conversation JSON copied',
+      conversationKey
     );
   }
 
-  #downloadConversation(): void {
-    if (!this.conversation) {
+  #downloadConversation(conversationKey: string): void {
+    const conversationRecord = this.#getConversationRecord(conversationKey);
+    if (!conversationRecord) {
       return;
     }
 
     const fileContent =
-      this.loadedSessionText ?? JSON.stringify(this.conversation, null, 2);
-    const extension = this.loadedSessionText ? 'jsonl' : 'json';
+      conversationRecord.fileText ??
+      JSON.stringify(conversationRecord.conversation, null, 2);
+    const extension = conversationRecord.fileText ? 'jsonl' : 'json';
     const blob = new Blob([fileContent], {
       type: 'application/json;charset=utf-8'
     });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `${this.conversation.sessionId ?? this.conversation.id}.${extension}`;
+    anchor.download = `${conversationRecord.conversation.sessionId ?? conversationRecord.conversation.id}.${extension}`;
     anchor.click();
     URL.revokeObjectURL(url);
-    this.conversationActionStatus = 'Conversation download started';
+    this.#setConversationActionStatus(
+      conversationKey,
+      'Conversation download started'
+    );
   }
 
-  #openRenderView(): void {
-    if (!this.conversation) {
+  #openRenderView(conversationKey: string): void {
+    const conversationRecord = this.#getConversationRecord(conversationKey);
+    if (!conversationRecord) {
       return;
     }
 
     const openedWindow = window.open('', '_blank', 'noopener,noreferrer');
     if (!openedWindow) {
-      this.conversationActionStatus = 'Unable to open Claude render view';
+      this.#setConversationActionStatus(
+        conversationKey,
+        'Unable to open Claude render view'
+      );
       return;
     }
 
-    const transcript = this.#getTimelineMessages()
+    const transcript = this.#getTimelineMessages(conversationRecord)
       .map(message => {
         const heading = [
           message.role,
@@ -744,25 +1145,38 @@ export class PrismApp extends LitElement {
     <title>Claude Render View</title>
   </head>
   <body style="margin:0;padding:24px;background:#f8fafc;color:#111827;font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-    <h1 style="margin:0 0 16px;font-size:20px;">${this.#escapeHtml(this.conversation.title)}</h1>
+    <h1 style="margin:0 0 16px;font-size:20px;">${this.#escapeHtml(conversationRecord.conversation.title)}</h1>
     ${transcript}
   </body>
 </html>`);
     openedWindow.document.close();
-    this.conversationActionStatus = 'Opened Claude render view';
+    this.#setConversationActionStatus(
+      conversationKey,
+      'Opened Claude render view'
+    );
   }
 
-  async #writeToClipboard(text: string, successMessage: string): Promise<void> {
+  async #writeToClipboard(
+    text: string,
+    successMessage: string,
+    conversationKey: string
+  ): Promise<void> {
     if (!navigator.clipboard?.writeText) {
-      this.conversationActionStatus = 'Clipboard API unavailable in this environment';
+      this.#setConversationActionStatus(
+        conversationKey,
+        'Clipboard API unavailable in this environment'
+      );
       return;
     }
 
     try {
       await navigator.clipboard.writeText(text);
-      this.conversationActionStatus = successMessage;
+      this.#setConversationActionStatus(conversationKey, successMessage);
     } catch {
-      this.conversationActionStatus = 'Clipboard write failed';
+      this.#setConversationActionStatus(
+        conversationKey,
+        'Clipboard write failed'
+      );
     }
   }
 
@@ -959,6 +1373,56 @@ export class PrismApp extends LitElement {
     .status-bar {
       display: grid;
       gap: 10px;
+    }
+
+    .conversation-list-header {
+      color: var(--gray-700);
+    }
+
+    .conversation-list {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+    }
+
+    .conversation-list[data-layout='grid'] {
+      grid-template-columns: repeat(
+        auto-fill,
+        minmax(min(100%, var(--prism-grid-column-width, 373px)), 1fr)
+      );
+    }
+
+    .conversation-container {
+      position: relative;
+      width: 100%;
+    }
+
+    .conversation-container-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 0 0 8px;
+      color: var(--gray-500);
+      font-size: 13px;
+    }
+
+    .conversation-list[data-layout='grid'] .conversation-container-meta {
+      padding-left: 8px;
+    }
+
+    .conversation-index {
+      color: var(--gray-400);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .conversation-file {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--gray-500);
+      word-break: break-word;
     }
 
     .info-row,

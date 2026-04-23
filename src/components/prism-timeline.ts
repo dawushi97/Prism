@@ -29,6 +29,9 @@ export class PrismTimeline extends LitElement {
   showAbsoluteTimestamp = false;
 
   @property({ type: String })
+  maxMessageHeight = '100vh';
+
+  @property({ type: String })
   actionStatus: string | null = null;
 
   @property({ type: Boolean })
@@ -106,6 +109,7 @@ export class PrismTimeline extends LitElement {
                       ?selected=${message.id === this.selectedMessageId}
                       .renderMarkdown=${this.renderMarkdown}
                       .showAbsoluteTimestamp=${this.showAbsoluteTimestamp}
+                      .maxMessageHeight=${this.maxMessageHeight}
                     ></prism-message-card>
                   `
           )}
@@ -157,6 +161,8 @@ export class PrismTimeline extends LitElement {
     .stack {
       display: grid;
       gap: 10px;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
     }
 
     .timeline-header {

@@ -19,6 +19,9 @@ export class PrismMessageCard extends LitElement {
   @property({ type: Boolean })
   showAbsoluteTimestamp = false;
 
+  @property({ type: String })
+  maxMessageHeight = '100vh';
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener('click', this.#handleClick);
@@ -55,7 +58,10 @@ export class PrismMessageCard extends LitElement {
       this.message.channel === 'event';
 
     return html`
-      <article class="card ${this.selected ? 'selected' : ''}">
+      <article
+        class="card ${this.selected ? 'selected' : ''}"
+        style=${`--prism-message-max-height: ${this.maxMessageHeight};`}
+      >
         <div class="rail ${this.message.role}">
           <span class="glyph" aria-hidden="true">${this.#getRoleGlyph()}</span>
         </div>
@@ -80,6 +86,7 @@ export class PrismMessageCard extends LitElement {
               <prism-message-text
                 .text=${this.message.text}
                 .shouldRenderMarkdown=${this.renderMarkdown}
+                .maxHeight=${this.maxMessageHeight}
               ></prism-message-text>
             `}
       </article>
@@ -256,7 +263,7 @@ export class PrismMessageCard extends LitElement {
     }
 
     pre {
-      max-height: 260px;
+      max-height: var(--prism-message-max-height, 100vh);
       overflow: auto;
       padding: 8px 10px;
       border-radius: 5px;
