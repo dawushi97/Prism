@@ -9,6 +9,33 @@ export type PrismChannel =
   | 'tool_result'
   | 'event';
 
+export type ClaudeSessionLineType =
+  | 'user'
+  | 'assistant'
+  | 'summary'
+  | 'system'
+  | 'attachment'
+  | 'file-history-snapshot'
+  | 'queue-operation'
+  | 'progress'
+  | 'permission-mode'
+  | 'last-prompt'
+  | 'custom-title'
+  | 'ai-title'
+  | 'tag'
+  | 'agent-name'
+  | 'agent-color'
+  | 'agent-setting'
+  | 'mode'
+  | 'worktree-state'
+  | 'pr-link'
+  | 'attribution-snapshot'
+  | 'content-replacement'
+  | 'marble-origami-commit'
+  | 'marble-origami-snapshot'
+  | 'turn_duration'
+  | string;
+
 export type PrismConversationAction =
   | 'toggleMarkdown'
   | 'toggleMetadata'
@@ -25,10 +52,25 @@ export interface NormalizedMessage {
   channel: PrismChannel;
   text: string;
   timestamp: string | null;
+  lineType?: ClaudeSessionLineType;
+  uuid?: string;
+  sessionId?: string | null;
   name?: string;
   recipient?: string;
   isSidechain: boolean;
+  isMeta?: boolean;
+  isCompactSummary?: boolean;
+  isVisibleInTranscriptOnly?: boolean;
   parentUuid: string | null;
+  agentId?: string;
+  slug?: string;
+  requestId?: string;
+  model?: string;
+  toolUseId?: string;
+  parentToolUseId?: string;
+  sourceToolAssistantUUID?: string;
+  toolUseResult?: unknown;
+  usage?: Record<string, unknown>;
   raw: Record<string, unknown>;
 }
 
@@ -48,7 +90,20 @@ export interface ClaudeSessionStats {
   toolResults: number;
   eventMessages: number;
   thinkingMessages: number;
+  summaryMessages: number;
+  fileSnapshots: number;
+  queueOperations: number;
+  progressEvents: number;
+  compactBoundaries: number;
+  branchPoints: number;
+  conversationBranchPoints: number;
+  progressForks: number;
+  titleEvents: number;
+  metadataEvents: number;
+  malformedLines: number;
   hasSidechain: boolean;
+  hasCompact: boolean;
+  hasToolUseResult: boolean;
 }
 
 export interface ClaudeSessionParseResult {

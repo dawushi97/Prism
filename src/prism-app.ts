@@ -515,7 +515,7 @@ export class PrismApp extends LitElement {
     fileName: string,
     conversation: NormalizedConversation
   ): string {
-    return conversation.sessionId ?? `${fileName}:${conversation.id}`;
+    return `${fileName}:${conversation.sessionId ?? conversation.id}`;
   }
 
   #mergeLoadedConversations(

@@ -168,6 +168,31 @@ describe('prism-app', () => {
     expect(metadataPanel?.shadowRoot?.textContent ?? '').toContain('No metadata selected.');
   });
 
+  test('keeps parent and subagent session files separate when sessionId matches', async () => {
+    const app = await mountApp();
+
+    await app.ingestFiles([
+      {
+        name: 'main-session.jsonl',
+        text: fixture('main-session.jsonl')
+      },
+      {
+        name: 'subagent-session.jsonl',
+        text: fixture('subagent-session.jsonl')
+      }
+    ]);
+    await app.updateComplete;
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const containers = [...getConversationContainers(app)];
+
+    expect(getTimelines(app)).toHaveLength(2);
+    expect(containers).toHaveLength(2);
+    expect(containers[0]?.textContent ?? '').toContain('main-session.jsonl');
+    expect(containers[1]?.textContent ?? '').toContain('subagent-session.jsonl');
+    expect(app.shadowRoot?.textContent ?? '').toContain('2 total conversations');
+  });
+
   test('renders markdown from the conversation toolbar and keeps tool output raw', async () => {
     const app = await mountApp();
 
