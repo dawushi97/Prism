@@ -382,10 +382,6 @@ export class PrismMessageCard extends LitElement {
       font-size: 13px;
       line-height: 1.55;
       color: var(--gray-800);
-      max-height: var(--prism-message-max-height, 100vh);
-      overflow: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
     }
   `;
 }

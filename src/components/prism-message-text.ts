@@ -53,6 +53,9 @@ export class PrismMessageText extends LitElement {
 
     .rendered {
       line-height: 1.45;
+      /* explicit so an inherited pre-wrap from the host can't turn the
+         inter-element newlines in marked's output into visible blank lines */
+      white-space: normal;
     }
 
     .rendered > :first-child {
