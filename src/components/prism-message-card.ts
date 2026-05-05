@@ -62,33 +62,53 @@ export class PrismMessageCard extends LitElement {
         class="card ${this.selected ? 'selected' : ''}"
         style=${`--prism-message-max-height: ${this.maxMessageHeight};`}
       >
-        <div class="rail ${this.message.role}">
-          <span class="glyph" aria-hidden="true">${this.#getRoleGlyph()}</span>
+        <div class="rail rail-${this.message.role}" aria-hidden="true">
+          <span class="glyph">${this.#getRoleGlyph()}</span>
+          <span class="rail-line"></span>
         </div>
-        <header>
-          <div class="chips">
-            <span class="chip role">${this.message.role}</span>
-            <span class="chip channel">${this.message.channel}</span>
-            ${this.message.isSidechain
-              ? html`<span class="chip sidechain">sidechain</span>`
-              : null}
-          </div>
-          <div class="meta">
-            ${this.message.name ? html`<span>${this.message.name}</span>` : null}
-            ${this.message.timestamp
-              ? html`<time>${this.#formatTimestamp(this.message.timestamp)}</time>`
-              : null}
-          </div>
-        </header>
-        ${isCodeLike
-          ? html`<pre>${this.message.text}</pre>`
-          : html`
-              <prism-message-text
-                .text=${this.message.text}
-                .shouldRenderMarkdown=${this.renderMarkdown}
-                .maxHeight=${this.maxMessageHeight}
-              ></prism-message-text>
-            `}
+
+        <div class="body">
+          <header>
+            <div class="chips">
+              <span class="chip role role-${this.message.role}"
+                >${this.message.role}</span
+              >
+              <span class="chip channel">${this.message.channel}</span>
+              ${this.message.name
+                ? html`<span class="chip name">${this.message.name}</span>`
+                : null}
+              ${this.message.isSidechain
+                ? html`<span class="chip sidechain">sidechain</span>`
+                : null}
+            </div>
+            <div class="meta">
+              ${this.message.timestamp
+                ? html`<time
+                    >${this.#formatTimestamp(this.message.timestamp)}</time
+                  >`
+                : null}
+              <button
+                class="fold-button"
+                type="button"
+                aria-label="Fold message"
+                title="Collapse message"
+                @click=${this.#handleFold}
+              >
+                ${renderIcon('ChevronUp', { size: 13 })}
+              </button>
+            </div>
+          </header>
+
+          ${isCodeLike
+            ? html`<pre>${this.message.text}</pre>`
+            : html`
+                <prism-message-text
+                  .text=${this.message.text}
+                  .shouldRenderMarkdown=${this.renderMarkdown}
+                  .maxHeight=${this.maxMessageHeight}
+                ></prism-message-text>
+              `}
+        </div>
       </article>
     `;
   }
@@ -125,11 +145,20 @@ export class PrismMessageCard extends LitElement {
           return 'User';
       }
     })();
-    return renderIcon(iconName, { size: 16 });
+    return renderIcon(iconName, { size: 14 });
   }
 
-  #handleClick = () => {
+  #handleClick = (event: Event) => {
     if (!this.message) {
+      return;
+    }
+    const path = event.composedPath();
+    if (
+      path.some(
+        node =>
+          node instanceof HTMLElement && node.classList?.contains('fold-button')
+      )
+    ) {
       return;
     }
 
@@ -142,63 +171,68 @@ export class PrismMessageCard extends LitElement {
     );
   };
 
+  #handleFold = (event: Event) => {
+    event.stopPropagation();
+    if (!this.message) {
+      return;
+    }
+    this.dispatchEvent(
+      new CustomEvent('prism-fold-message', {
+        detail: { messageId: this.message.id },
+        bubbles: true,
+        composed: true
+      })
+    );
+  };
+
   static styles = css`
     :host {
       display: block;
-      cursor: pointer;
-      color: var(--gray-900, #242424);
     }
 
     .card {
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr);
+      grid-template-columns: 16px minmax(0, 1fr);
       column-gap: 10px;
-      border-radius: 5px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--gray-200);
       background: white;
-      padding: 10px 12px 10px 10px;
-      border: 1px solid var(--gray-200, #ebebeb);
-      transition: background-color 120ms ease;
+      cursor: pointer;
+      min-width: 0;
+      transition: background 120ms ease, border-color 120ms ease;
     }
 
     .card:hover {
-      background: color-mix(in lab, var(--gray-100, #f5f5f5), white 60%);
+      border-color: var(--gray-300);
     }
 
     .card.selected {
-      background: color-mix(in lab, var(--blue-50, #eef7ff), white 35%);
+      background: color-mix(in srgb, var(--blue-50) 50%, white);
+      border-color: color-mix(in srgb, var(--blue-700) 40%, white);
     }
 
+    /* ---- Role rail (left): icon + accent line ---- */
     .rail {
-      grid-row: 1 / span 2;
-      display: grid;
-      justify-items: center;
-      align-content: start;
-      gap: 8px;
-      padding-top: 2px;
-      color: var(--gray-500, #7c7c7c);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      color: var(--gray-500);
     }
 
-    .rail::after {
-      content: '';
-      width: 4px;
-      min-height: 100%;
-      border-radius: 999px;
-      background: currentColor;
-      opacity: 0.75;
+    .rail-user {
+      color: var(--green-700);
     }
 
-    .rail.user {
-      color: var(--green-700, #2f8b43);
+    .rail-assistant,
+    .rail-tool {
+      color: var(--purple-700);
     }
 
-    .rail.assistant,
-    .rail.tool {
-      color: var(--purple-700, #6d2aa1);
-    }
-
-    .rail.system,
-    .rail.meta {
-      color: var(--gray-500, #7c7c7c);
+    .rail-system,
+    .rail-meta {
+      color: var(--gray-500);
     }
 
     .glyph {
@@ -206,74 +240,152 @@ export class PrismMessageCard extends LitElement {
       line-height: 0;
     }
 
+    .rail-line {
+      width: 2px;
+      flex: 1;
+      min-height: 8px;
+      background: currentColor;
+      opacity: 0.4;
+      border-radius: 2px;
+    }
+
+    /* ---- Body (right column) ---- */
+    .body {
+      min-width: 0;
+    }
+
     header {
-      grid-column: 2;
       display: flex;
       justify-content: space-between;
-      gap: 12px;
-      align-items: flex-start;
-      margin-bottom: 6px;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
     }
 
-    .chips,
-    .meta {
+    .chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .chip {
-      border-radius: 5px;
-      padding: 0 5px;
-      font-size: 12px;
-      line-height: 1.5;
-      font-weight: 500;
-      background: color-mix(in lab, currentColor 7%, white 100%);
-      color: currentColor;
-    }
-
-    .role {
-      color: var(--green-700, #2f8b43);
-    }
-
-    .channel {
-      color: var(--purple-700, #6d2aa1);
-    }
-
-    .sidechain {
-      color: var(--blue-700, #1e76d8);
+      gap: 5px;
+      align-items: center;
+      min-width: 0;
     }
 
     .meta {
-      color: var(--gray-500, #7c7c7c);
-      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
     }
 
+    time {
+      color: var(--gray-500);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    /* ---- Chips: 1px 6px padding, 4px radius, 10.5px font ---- */
+    .chip {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10.5px;
+      line-height: 1.5;
+      font-weight: 400;
+      white-space: nowrap;
+      color: var(--gray-600);
+      background: var(--gray-100);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .chip.role {
+      font-weight: 500;
+    }
+
+    .chip.role-user {
+      color: var(--green-700);
+      background: hsl(122, 43%, 96%);
+    }
+
+    .chip.role-assistant,
+    .chip.role-tool {
+      color: var(--purple-700);
+      background: hsl(282, 68%, 97%);
+    }
+
+    .chip.role-system,
+    .chip.role-meta {
+      color: var(--gray-600);
+      background: var(--gray-100);
+    }
+
+    .chip.channel,
+    .chip.name {
+      color: var(--gray-600);
+      background: var(--gray-100);
+    }
+
+    .chip.sidechain {
+      color: var(--blue-700);
+      background: var(--blue-50);
+    }
+
+    /* ---- Fold button (hover-revealed) ---- */
+    .fold-button {
+      all: unset;
+      box-sizing: border-box;
+      width: 20px;
+      height: 20px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 4px;
+      color: var(--gray-500);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+    }
+
+    .card:hover .fold-button,
+    .fold-button:focus-visible {
+      opacity: 1;
+    }
+
+    .fold-button:hover {
+      background: var(--gray-100);
+      color: var(--gray-900);
+    }
+
+    .fold-button:focus-visible {
+      outline: 2px solid var(--blue-700);
+      outline-offset: 1px;
+    }
+
+    /* ---- Message body ---- */
     pre {
-      grid-column: 2;
       margin: 0;
-      color: inherit;
-      line-height: 1.35;
+      padding: 8px 10px;
+      max-height: var(--prism-message-max-height, 100vh);
+      overflow: auto;
+      background: var(--gray-50);
+      border: 1px solid var(--gray-100);
+      border-radius: 5px;
+      font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+      font-size: 11.5px;
+      line-height: 1.5;
+      color: var(--gray-800);
       white-space: pre-wrap;
       word-break: break-word;
     }
 
     prism-message-text {
-      grid-column: 2;
-    }
-
-    pre {
+      display: block;
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--gray-800);
       max-height: var(--prism-message-max-height, 100vh);
       overflow: auto;
-      padding: 8px 10px;
-      border-radius: 5px;
-      background: var(--gray-100, #f5f5f5);
-      color: var(--gray-800, #383838);
-      font-family:
-        ui-monospace,
-        'SFMono-Regular',
-        monospace;
-      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
   `;
 }

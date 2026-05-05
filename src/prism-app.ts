@@ -114,6 +114,11 @@ export class PrismApp extends LitElement {
   @state()
   private focusModeExemptedMessageKeys: string[] = [];
 
+  // NEW: per-message manual fold (independent of Focus Mode).
+  // Stored as a flat list of `${conversationKey}:${messageId}` strings.
+  @state()
+  private manuallyFoldedKeys: string[] = [];
+
   async ingestFiles(files: LoadedTextFile[]): Promise<void> {
     this.stagedFiles = [];
     this.focusModeSettings = createDefaultFocusModeSettings();
@@ -122,7 +127,6 @@ export class PrismApp extends LitElement {
     this.conversationActionStatus = null;
     this.metadataConversationKey = null;
     this.shareMenuConversationKey = null;
-    this.focusModeExemptedMessageKeys = [];
     this.showActionsMenu = false;
     this.showPreferencePanel = false;
 
@@ -146,6 +150,7 @@ export class PrismApp extends LitElement {
           ...files.map(file => file.name)
         ])
       ];
+      this.#pruneMessageKeyState();
       this.metaSummary = null;
       this.selectedMessageRef = null;
       this.detectionLabel = 'Claude session JSONL';
@@ -157,6 +162,7 @@ export class PrismApp extends LitElement {
     this.selectedMessageRef = null;
     this.metadataConversationKey = null;
     this.shareMenuConversationKey = null;
+    this.#pruneMessageKeyState();
     this.loadedFileNames = files.map(file => file.name);
     this.metaSummary = parsedMetaFiles[0]
       ? parseClaudeMeta(parsedMetaFiles[0].raw)
@@ -192,248 +198,268 @@ export class PrismApp extends LitElement {
         ? null
         : this.#getSelectedMessageForConversation(this.metadataConversationKey);
 
+    const hasLoadedSession = this.loadedConversations.length > 0;
+    const hasStagedFiles = this.stagedFiles.length > 0;
+    const hasContent = hasLoadedSession || this.metaOnly;
+    const showSidebar = this.metaOnly || this.metadataConversationKey !== null;
+
     return html`
       <div class="app">
         <header class="header">
           <div class="header-inner">
-            <div class="brand-row">
-              <span class="brand">Prism</span>
-              <span class="name">Claude Session Viewer</span>
+            <div class="brand">
+              <span class="brand-name">Prism</span>
+              <span class="brand-sub">Claude Session Viewer</span>
             </div>
-            <div class="header-controls">
-              <div
-                class="loader"
-                @dragover=${this.#handleDragOver}
-                @drop=${this.#handleDrop}
-              >
-                <div class="loader-copy">
-                  Drag .jsonl / .meta.json here, or use the actions menu above.
-                </div>
-              </div>
+
+            <div
+              class="dropzone"
+              @dragover=${this.#handleDragOver}
+              @drop=${this.#handleDrop}
+            >
+              ${this.stagedFiles.length > 0
+                ? html`<span class="dropzone-text staged"
+                    ><span class="staged-count"
+                      >${this.stagedFiles.length}</span
+                    >
+                    file${this.stagedFiles.length === 1 ? '' : 's'} staged:
+                    ${this.stagedFiles.map(f => f.name).join(', ')}</span
+                  >`
+                : html`<span class="dropzone-text"
+                    >Drop <code>.jsonl</code> files here, or use the menu</span
+                  >`}
+            </div>
+
+            <button
+              class="header-btn load"
+              type="button"
+              ?disabled=${this.stagedFiles.length === 0}
+              @click=${this.#handleLoadStagedFiles}
+            >
+              Load
+            </button>
+
+            <button
+              class="header-btn icon"
+              type="button"
+              aria-label="Preferences"
+              title="Preferences"
+              ?data-active=${this.showPreferencePanel}
+              @click=${this.#handlePreferenceDetailsToggle}
+            >
+              ${renderIcon('Settings')}
+            </button>
+
+            <div class="menu-anchor">
               <button
-                class="load-staged-button"
+                class="header-btn icon action-toggle"
                 type="button"
-                name="loadStagedFiles"
-                ?disabled=${this.stagedFiles.length === 0}
-                @click=${this.#handleLoadStagedFiles}
+                aria-label="Actions"
+                title="Actions"
+                aria-expanded=${this.showActionsMenu}
+                ?data-active=${this.showActionsMenu}
+                @click=${this.#handleActionsToggle}
               >
-                Load
+                ${renderIcon('MoreHorizontal')}
               </button>
-              <div class="menu-anchor">
-                <button
-                  class="header-action action-toggle"
-                  type="button"
-                  aria-label="Actions"
-                  title="Actions"
-                  aria-expanded=${this.showActionsMenu}
-                  ?data-active=${this.showActionsMenu}
-                  @click=${this.#handleActionsToggle}
-                >
-                  ${renderIcon('Menu')}
-                </button>
-                ${this.showActionsMenu
-                  ? html`
-                      <div class="actions-menu" @click=${this.#stopPropagation}>
-                        <label class="menu-item file-menu-item">
-                          <input
-                            type="file"
-                            multiple
-                            accept=".jsonl,.json,.meta.json"
-                            @change=${this.#handleFileSelection}
-                          />
-                          <span>Load local files</span>
-                        </label>
-                        <button
-                          class="menu-item submenu-toggle"
-                          type="button"
-                          name="togglePreferencesMenu"
-                          aria-haspopup="dialog"
-                          aria-expanded=${this.showPreferencePanel}
-                          @click=${this.#handlePreferenceDetailsToggle}
-                        >
-                          <span>Preferences</span>
-                        </button>
-                      </div>
-                    `
-                  : nothing}
-                ${this.showPreferencePanel
-                  ? html`
-                      <prism-preference-panel
-                        .availableAuthors=${this.#availableAuthors()}
-                        .availableRecipients=${this.#availableRecipients()}
-                        .availableContentTypes=${this.#availableContentTypes()}
-                        .settings=${this.focusModeSettings}
-                        .viewSettings=${this.viewSettings}
-                        @prism-request-close=${this.#handlePreferenceClose}
-                        @prism-focus-mode-change=${this.#handleFocusModeChange}
-                        @prism-view-settings-change=${this.#handleViewSettingsChange}
-                      ></prism-preference-panel>
-                    `
-                  : nothing}
-              </div>
+              ${this.showActionsMenu
+                ? html`
+                    <div class="actions-menu" @click=${this.#stopPropagation}>
+                      <label class="menu-item file-menu-item">
+                        <input
+                          type="file"
+                          multiple
+                          accept=".jsonl,.json,.meta.json"
+                          @change=${this.#handleFileSelection}
+                        />
+                        <span class="menu-item-icon">${renderIcon('Upload')}</span>
+                        <span>Load local files</span>
+                      </label>
+                    </div>
+                  `
+                : nothing}
             </div>
+
+            ${this.showPreferencePanel
+              ? html`
+                  <prism-preference-panel
+                    .availableAuthors=${this.#availableAuthors()}
+                    .availableRecipients=${this.#availableRecipients()}
+                    .availableContentTypes=${this.#availableContentTypes()}
+                    .settings=${this.focusModeSettings}
+                    .viewSettings=${this.viewSettings}
+                    @prism-request-close=${this.#handlePreferenceClose}
+                    @prism-focus-mode-change=${this.#handleFocusModeChange}
+                    @prism-view-settings-change=${this.#handleViewSettingsChange}
+                  ></prism-preference-panel>
+                `
+              : nothing}
           </div>
         </header>
 
-        <div class="content">
+        <div class="content ${showSidebar ? 'has-sidebar' : ''}">
           <section class="content-center">
-            <section class="status-bar">
-              <div class="info-row">
-                <span class="label">Detection</span>
-                <span class="value">${this.detectionLabel}</span>
-                <span class="label">Loaded Files</span>
-                <span class="value files"
-                  >${this.loadedFileNames.join(', ') || 'None'}</span
-                >
-              </div>
-              ${this.stagedFiles.length > 0
-                ? html`
-                    <div class="pending-files">
-                      <span class="label">Pending Files</span>
-                      <span class="value files"
-                        >${this.stagedFiles.map(file => file.name).join(', ')}</span
-                      >
-                    </div>
-                  `
-                : nothing}
-
-              ${this.loadedConversations.length > 0
-                ? html`
-                    <div class="metrics-row">
-                      <span class="metric">
-                        <strong>${this.loadedConversations.length}</strong>
-                        <small>Conversations</small>
-                      </span>
-                      <span class="metric">
-                        <strong>${totalMessages}</strong>
-                        <small>Messages</small>
-                      </span>
-                      <span class="metric">
-                        <strong>${totalToolCalls}</strong>
-                        <small>Tool Calls</small>
-                      </span>
-                      <span class="metric">
-                        <strong>${totalEvents}</strong>
-                        <small>Events</small>
-                      </span>
-                    </div>
-                  `
-                : nothing}
-
-              ${this.loadedConversations.length > 0
-                ? html`
-                    <div class="filters">
-                      <label class="checkbox">
-                        <input
-                          type="checkbox"
-                          name="sidechainOnly"
-                          .checked=${this.sidechainOnly}
-                          @change=${this.#handleSidechainToggle}
-                        />
-                        <span>Only sidechain</span>
-                      </label>
-                      <span class="active-filter-summary"
-                        >${this.#getFilterSummary()}</span
-                      >
-                    </div>
-                `
-                : nothing}
-
-              ${this.loadedConversations.length > 0
-                ? html`
-                    <div class="conversation-list-header">
-                      <div class="empty-title">
-                        ${this.loadedConversations.length} total conversations
-                      </div>
-                    </div>
-                    <div
-                      class="conversation-list"
-                      data-layout=${this.viewSettings.layoutMode}
-                      style=${`--prism-grid-column-width: ${this.viewSettings.gridColumnWidth}px;`}
-                    >
-                      ${this.loadedConversations.map((entry, index) => {
-                        const baseMessages = this.#getTimelineMessages(entry);
-                        const timelineMessages = baseMessages.filter(
-                          message => !this.#isMessageRemovedByFocusMode(message)
-                        );
-                        const hiddenMessageIds = timelineMessages
-                          .filter(message =>
-                            this.#isMessageFoldedByFocusMode(entry.key, message)
-                          )
-                          .map(message => message.id);
-                        const selectedMessageId =
-                          this.selectedMessageRef?.conversationKey === entry.key
-                            ? this.selectedMessageRef.messageId
-                            : null;
-
-                        return html`
-                          <section
-                            class="conversation-container"
-                            id=${`conversation-${index}`}
-                          >
-                            <div class="conversation-container-meta">
-                              <span class="conversation-index">#${index}</span>
-                              <span class="conversation-file">${entry.fileName}</span>
-                            </div>
-                            <prism-timeline
-                              .conversation=${entry.conversation}
-                              .messages=${timelineMessages}
-                              .hiddenMessageIds=${hiddenMessageIds}
-                              .selectedMessageId=${selectedMessageId}
-                              .renderMarkdown=${this.renderMarkdown}
-                              .showAbsoluteTimestamp=${this.viewSettings.showAbsoluteTimestamp}
-                              .maxMessageHeight=${this.#resolveMaxMessageHeight()}
-                              .actionStatus=${this.conversationActionStatus?.conversationKey ===
-                              entry.key
-                                ? this.conversationActionStatus.message
-                                : null}
-                              .showShareMenu=${this.shareMenuConversationKey === entry.key}
-                              @prism-select-message=${(
-                                event: CustomEvent<{ messageId: string }>
-                              ) => this.#handleMessageSelect(entry.key, event)}
-                              @prism-reveal-message=${(
-                                event: CustomEvent<{ messageId: string }>
-                              ) => this.#handleRevealMessage(entry.key, event)}
-                              @prism-conversation-action=${(
-                                event: CustomEvent<PrismConversationAction>
-                              ) => this.#handleConversationAction(entry.key, event)}
-                            ></prism-timeline>
-                          </section>
-                        `;
-                      })}
-                    </div>
-                  `
-                : nothing}
-            </section>
-
-            ${this.metaOnly
+            ${hasLoadedSession
               ? html`
-                  <section class="empty-message">
-                    <div class="empty-title">Meta Summary</div>
-                    <div>需要配套 JSONL 才能渲染时间线。</div>
-                    <div>${this.metaSummary?.agentType ?? 'Unknown agent type'}</div>
-                  </section>
+                  <div class="status-bar">
+                    <span class="status-file">
+                      ${renderIcon('FileJson', { size: 14 })}
+                      <span class="status-file-name"
+                        >${this.loadedFileNames.join(', ')}</span
+                      >
+                    </span>
+                    <span class="status-sep">·</span>
+                    <span class="status-detect">${this.detectionLabel}</span>
+                    <span class="status-sep">·</span>
+                    <span class="metric"
+                      ><strong>${this.loadedConversations.length}</strong>
+                      conversations</span
+                    >
+                    <span class="metric"
+                      ><strong>${totalMessages}</strong> messages</span
+                    >
+                    <span class="metric"
+                      ><strong>${totalToolCalls}</strong> tool calls</span
+                    >
+                    <span class="metric"
+                      ><strong>${totalEvents}</strong> events</span
+                    >
+                    <span class="status-spacer"></span>
+                    <label class="sidechain-toggle">
+                      <input
+                        type="checkbox"
+                        name="sidechainOnly"
+                        .checked=${this.sidechainOnly}
+                        @change=${this.#handleSidechainToggle}
+                      />
+                      <span>Only sidechain</span>
+                    </label>
+                  </div>
+                  ${this.#hasActiveFocusFilters()
+                    ? html`<div class="filter-summary">
+                        ${this.#getFilterSummary()}
+                      </div>`
+                    : nothing}
                 `
               : nothing}
 
+            ${this.loadedConversations.length > 0
+              ? html`
+                  <div
+                    class="conversation-list"
+                    data-layout=${this.viewSettings.layoutMode}
+                    style=${`--prism-grid-column-width: ${this.viewSettings.gridColumnWidth}px;`}
+                  >
+                    ${this.loadedConversations.map((entry, index) => {
+                      const baseMessages = this.#getTimelineMessages(entry);
+                      const timelineMessages = baseMessages.filter(
+                        message => !this.#isMessageRemovedByFocusMode(message)
+                      );
+                      const hiddenMessageIds = timelineMessages
+                        .filter(message =>
+                          this.#isMessageHidden(entry.key, message)
+                        )
+                        .map(message => message.id);
+                      const selectedMessageId =
+                        this.selectedMessageRef?.conversationKey === entry.key
+                          ? this.selectedMessageRef.messageId
+                          : null;
+
+                      return html`
+                        <prism-timeline
+                          id=${`conversation-${index}`}
+                          .conversation=${entry.conversation}
+                          .fileName=${entry.fileName}
+                          .conversationIndex=${index}
+                          .messages=${timelineMessages}
+                          .hiddenMessageIds=${hiddenMessageIds}
+                          .selectedMessageId=${selectedMessageId}
+                          .renderMarkdown=${this.renderMarkdown}
+                          .showAbsoluteTimestamp=${this.viewSettings
+                            .showAbsoluteTimestamp}
+                          .maxMessageHeight=${this.#resolveMaxMessageHeight()}
+                          .actionStatus=${this.conversationActionStatus
+                            ?.conversationKey === entry.key
+                            ? this.conversationActionStatus.message
+                            : null}
+                          .showShareMenu=${this.shareMenuConversationKey ===
+                          entry.key}
+                          @prism-select-message=${(
+                            event: CustomEvent<{ messageId: string }>
+                          ) => this.#handleMessageSelect(entry.key, event)}
+                          @prism-reveal-message=${(
+                            event: CustomEvent<{ messageId: string }>
+                          ) => this.#handleRevealMessage(entry.key, event)}
+                          @prism-fold-message=${(
+                            event: CustomEvent<{ messageId: string }>
+                          ) => this.#handleFoldMessage(entry.key, event)}
+                          @prism-conversation-action=${(
+                            event: CustomEvent<PrismConversationAction>
+                          ) =>
+                            this.#handleConversationAction(entry.key, event)}
+                        ></prism-timeline>
+                      `;
+                    })}
+                  </div>
+                `
+              : nothing}
+
+            ${!hasContent
+              ? hasStagedFiles
+                ? html`
+                    <section class="empty-state">
+                      <div class="empty-state-title">
+                        ${this.stagedFiles.length} file${this.stagedFiles
+                          .length === 1
+                          ? ''
+                          : 's'}
+                        staged
+                      </div>
+                      <div class="empty-state-body">
+                        Click <strong>Load</strong> in the header to parse and
+                        render the conversation.
+                      </div>
+                    </section>
+                  `
+                : html`
+                    <section class="empty-state">
+                      <div class="empty-state-title">No session loaded</div>
+                      <div class="empty-state-body">
+                        Drop a Claude <code>.jsonl</code> file in the header
+                        above, or use the menu to load local files.
+                      </div>
+                    </section>
+                  `
+              : nothing}
+
+            ${this.metaOnly
+              ? html`
+                  <section class="empty-state">
+                    <div class="empty-state-title">Meta Summary</div>
+                    <div class="empty-state-body">
+                      Need a paired JSONL to render the timeline. Detected
+                      agent: ${this.metaSummary?.agentType ?? 'unknown'}.
+                    </div>
+                  </section>
+                `
+              : nothing}
           </section>
 
-          <aside
-            class="content-right"
-            ?is-hidden=${!this.metaOnly && this.metadataConversationKey === null}
-          >
+          <aside class="content-right" ?is-hidden=${!showSidebar}>
             <prism-metadata-panel
               title=${this.metaOnly
                 ? 'Meta Summary'
                 : this.metadataConversationKey === null
                   ? 'Metadata'
                   : sidebarSelectedMessage
-                  ? 'Metadata'
-                  : 'Conversation Metadata'}
+                    ? 'Metadata'
+                    : 'Conversation Metadata'}
               .data=${this.metaOnly
-                ? this.metaSummary?.raw ?? null
+                ? (this.metaSummary?.raw ?? null)
                 : this.metadataConversationKey !== null
-                  ? sidebarSelectedMessage?.raw ?? sidebarConversation?.metadata ?? null
+                  ? (sidebarSelectedMessage?.raw ??
+                    sidebarConversation?.metadata ??
+                    null)
                   : null}
               .conversation=${sidebarConversation}
               .stats=${sidebarConversationRecord?.parseResult.stats ?? null}
@@ -591,6 +617,25 @@ export class PrismApp extends LitElement {
     });
   }
 
+  // Drop fold/exemption keys whose conversation+message no longer exist.
+  // Called after a successful merge so per-message UI state survives an
+  // incremental ingest of unrelated sessions.
+  #pruneMessageKeyState(): void {
+    const valid = new Set(
+      this.loadedConversations.flatMap(record =>
+        record.conversation.messages.map(message =>
+          this.#getMessageRefKey(record.key, message.id)
+        )
+      )
+    );
+    this.manuallyFoldedKeys = this.manuallyFoldedKeys.filter(key =>
+      valid.has(key)
+    );
+    this.focusModeExemptedMessageKeys = this.focusModeExemptedMessageKeys.filter(
+      key => valid.has(key)
+    );
+  }
+
   #hasActiveFocusFilters(): boolean {
     const { author, recipient, contentType } = this.focusModeSettings;
     return (
@@ -688,6 +733,27 @@ export class PrismApp extends LitElement {
     return this.#classifyMessageByFocusMode(message) !== 'include';
   }
 
+  #isMessageManuallyFolded(
+    conversationKey: string,
+    message: NormalizedMessage
+  ): boolean {
+    return this.manuallyFoldedKeys.includes(
+      this.#getMessageRefKey(conversationKey, message.id)
+    );
+  }
+
+  // A message renders as a hidden stub if EITHER focus mode hides it
+  // OR the user manually folded it.
+  #isMessageHidden(
+    conversationKey: string,
+    message: NormalizedMessage
+  ): boolean {
+    return (
+      this.#isMessageManuallyFolded(conversationKey, message) ||
+      this.#isMessageFoldedByFocusMode(conversationKey, message)
+    );
+  }
+
   #isMessageRemovedByFocusMode(message: NormalizedMessage): boolean {
     const classification = this.#classifyMessageByFocusMode(message);
 
@@ -742,7 +808,10 @@ export class PrismApp extends LitElement {
     const parts: string[] = [];
     const fieldSummaries: Array<[string, PrismFocusBucket<string>]> = [
       ['author', this.focusModeSettings.author as PrismFocusBucket<string>],
-      ['recipient', this.focusModeSettings.recipient as PrismFocusBucket<string>],
+      [
+        'recipient',
+        this.focusModeSettings.recipient as PrismFocusBucket<string>
+      ],
       ['type', this.focusModeSettings.contentType as PrismFocusBucket<string>]
     ];
 
@@ -764,7 +833,7 @@ export class PrismApp extends LitElement {
     if (parts.length === 0) {
       return 'No focus filters';
     }
-    return parts.join(' | ');
+    return parts.join(' • ');
   }
 
   async #handleFileSelection(event: Event): Promise<void> {
@@ -813,9 +882,6 @@ export class PrismApp extends LitElement {
   #handleActionsToggle(event: Event): void {
     event.stopPropagation();
     this.showActionsMenu = !this.showActionsMenu;
-    if (this.showActionsMenu) {
-      this.showPreferencePanel = false;
-    }
   }
 
   #handlePreferenceDetailsToggle(event: Event): void {
@@ -836,7 +902,6 @@ export class PrismApp extends LitElement {
     const path = event.composedPath();
     const menu = this.renderRoot.querySelector('.actions-menu');
     const toggle = this.renderRoot.querySelector('.action-toggle');
-    const preferencePanel = this.renderRoot.querySelector('prism-preference-panel');
 
     if (
       this.showActionsMenu &&
@@ -845,48 +910,30 @@ export class PrismApp extends LitElement {
       this.showActionsMenu = false;
     }
 
+    // Close any open share menu when the click lands outside its anchor.
     if (
-      this.showPreferencePanel &&
-      !(
-        (preferencePanel && path.includes(preferencePanel)) ||
-        (toggle && path.includes(toggle))
+      this.shareMenuConversationKey !== null &&
+      !path.some(
+        node =>
+          node instanceof HTMLElement &&
+          node.classList?.contains('share-anchor')
       )
     ) {
-      this.showPreferencePanel = false;
+      this.shareMenuConversationKey = null;
     }
   };
 
   #handleKeydown = (event: KeyboardEvent): void => {
-    if (
-      event.key === 'Escape' &&
-      (this.showActionsMenu || this.showPreferencePanel)
-    ) {
-      this.showActionsMenu = false;
-      this.showPreferencePanel = false;
-    }
-  };
-
-  #handleFocusIn = (event: FocusEvent): void => {
-    const path = event.composedPath();
-    const menu = this.renderRoot.querySelector('.actions-menu');
-    const toggle = this.renderRoot.querySelector('.action-toggle');
-    const preferencePanel = this.renderRoot.querySelector('prism-preference-panel');
-
-    if (
-      this.showActionsMenu &&
-      !((menu && path.includes(menu)) || (toggle && path.includes(toggle)))
-    ) {
-      this.showActionsMenu = false;
-    }
-
-    if (
-      this.showPreferencePanel &&
-      !(
-        (preferencePanel && path.includes(preferencePanel)) ||
-        (toggle && path.includes(toggle))
-      )
-    ) {
-      this.showPreferencePanel = false;
+    if (event.key === 'Escape') {
+      if (this.showActionsMenu) {
+        this.showActionsMenu = false;
+      }
+      if (this.showPreferencePanel) {
+        this.showPreferencePanel = false;
+      }
+      if (this.shareMenuConversationKey !== null) {
+        this.shareMenuConversationKey = null;
+      }
     }
   };
 
@@ -897,7 +944,6 @@ export class PrismApp extends LitElement {
   #stageFiles(files: LoadedTextFile[]): void {
     this.stagedFiles = files;
     this.showActionsMenu = false;
-    this.showPreferencePanel = false;
     this.conversationActionStatus = null;
   }
 
@@ -906,13 +952,11 @@ export class PrismApp extends LitElement {
     this.viewSettings = this.#readViewSettingsFromLocation();
     document.addEventListener('click', this.#handleDocumentClick);
     document.addEventListener('keydown', this.#handleKeydown);
-    document.addEventListener('focusin', this.#handleFocusIn);
   }
 
   disconnectedCallback(): void {
     document.removeEventListener('click', this.#handleDocumentClick);
     document.removeEventListener('keydown', this.#handleKeydown);
-    document.removeEventListener('focusin', this.#handleFocusIn);
     super.disconnectedCallback();
   }
 
@@ -988,12 +1032,34 @@ export class PrismApp extends LitElement {
     conversationKey: string,
     event: CustomEvent<{ messageId: string }>
   ): void {
+    const refKey = this.#getMessageRefKey(
+      conversationKey,
+      event.detail.messageId
+    );
+
+    // If the message was hidden by focus mode, exempt it.
     this.focusModeExemptedMessageKeys = [
-      ...new Set([
-        ...this.focusModeExemptedMessageKeys,
-        this.#getMessageRefKey(conversationKey, event.detail.messageId)
-      ])
+      ...new Set([...this.focusModeExemptedMessageKeys, refKey])
     ];
+    // If the message was manually folded, unfold it.
+    this.manuallyFoldedKeys = this.manuallyFoldedKeys.filter(
+      key => key !== refKey
+    );
+  }
+
+  // NEW: user clicked the chevron-up "fold" button on a message card.
+  #handleFoldMessage(
+    conversationKey: string,
+    event: CustomEvent<{ messageId: string }>
+  ): void {
+    const refKey = this.#getMessageRefKey(
+      conversationKey,
+      event.detail.messageId
+    );
+    if (this.manuallyFoldedKeys.includes(refKey)) {
+      return;
+    }
+    this.manuallyFoldedKeys = [...this.manuallyFoldedKeys, refKey];
   }
 
   async #handleConversationAction(
@@ -1193,122 +1259,170 @@ export class PrismApp extends LitElement {
     :host {
       display: block;
       height: 100%;
-      color: hsl(0, 0%, 29%);
-      --gray-50: hsl(0, 0%, 98%);
-      --gray-100: hsl(0, 0%, 96%);
-      --gray-200: hsl(0, 0%, 92%);
-      --gray-300: hsl(0, 0%, 88%);
-      --gray-400: hsl(0, 0%, 74%);
-      --gray-500: hsl(0, 0%, 56%);
-      --gray-600: hsl(0, 0%, 43%);
-      --gray-700: hsl(0, 0%, 36%);
-      --gray-800: hsl(0, 0%, 23%);
-      --gray-900: hsl(0, 0%, 14%);
-      --green-700: hsl(122, 43.43%, 38.82%);
-      --purple-700: hsl(282, 67.88%, 37.84%);
-      --blue-700: hsl(209, 78.72%, 46.08%);
-      --blue-50: hsl(205, 86.67%, 94.12%);
+      color: var(--gray-800);
     }
 
     .app {
       width: 100%;
-      height: 100%;
+      min-height: 100%;
       display: flex;
       flex-direction: column;
-      overflow: auto;
-      overflow-x: hidden;
+      background: white;
     }
 
+    /* ---- Header: 48px single row, content centered to 1100px ---- */
     .header {
-      width: 100%;
-      padding: 20px 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
       position: sticky;
       top: 0;
-      z-index: 3;
-      background: linear-gradient(
-        to bottom,
-        rgba(255, 255, 255, 1) 20%,
-        rgba(255, 255, 255, 0.9) 80%,
-        rgba(255, 255, 255, 0) 100%
-      );
+      z-index: 10;
+      width: 100%;
+      height: var(--header-height, 48px);
+      background: white;
+      border-bottom: 1px solid var(--gray-200);
+      display: flex;
+      justify-content: center;
     }
 
     .header-inner {
-      width: min(1160px, calc(100vw - 24px));
+      position: relative;
+      width: 100%;
+      max-width: var(--shell-max-width, 1100px);
+      height: 100%;
+      padding: 0 20px;
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .brand-row {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-    }
-
-    .header-controls {
-      flex: 1;
-      min-width: 0;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
       align-items: center;
       gap: 12px;
     }
 
-    .header-action {
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .brand-name {
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+      color: var(--gray-900);
+    }
+
+    .brand-sub {
+      font-size: 11.5px;
+      color: var(--gray-500);
+    }
+
+    .dropzone {
+      flex: 1;
+      min-width: 0;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      border: 1px dashed var(--gray-300);
+      border-radius: 8px;
+      background: var(--gray-50);
+      color: var(--gray-500);
+      font-size: 12px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      transition: border-color 120ms ease;
+    }
+
+    .dropzone:hover {
+      border-color: var(--gray-400);
+    }
+
+    .dropzone-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dropzone-text code {
+      font-size: 11px;
+      color: var(--gray-700);
+    }
+
+    .staged-count {
+      color: var(--gray-700);
+      font-weight: 500;
+    }
+
+    .header-btn {
       all: unset;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 50px;
-      height: 50px;
-      border-radius: 10px;
-      color: var(--gray-700);
-      cursor: pointer;
-      line-height: 1;
+      height: 30px;
       border: 1px solid var(--gray-300);
+      border-radius: 8px;
       background: white;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 120ms ease, color 120ms ease,
+        border-color 120ms ease;
     }
 
-    .header-action:hover {
+    .header-btn.load {
+      padding: 0 14px;
+      color: var(--gray-800);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .header-btn.load:hover:not(:disabled) {
+      background: var(--gray-50);
+    }
+
+    .header-btn.load:disabled {
+      background: var(--gray-50);
+      color: var(--gray-400);
+      cursor: not-allowed;
+    }
+
+    .header-btn.icon {
+      width: 30px;
+      color: var(--gray-700);
+    }
+
+    .header-btn.icon:hover {
+      background: var(--gray-50);
+      color: var(--gray-900);
+    }
+
+    .header-btn.icon[data-active] {
       background: var(--gray-100);
       color: var(--gray-900);
     }
 
-    .header-action:focus-visible {
+    .header-btn:focus-visible {
       outline: 2px solid var(--blue-700);
       outline-offset: 1px;
     }
 
-    .header-action[data-active] {
-      background: var(--gray-200);
-      color: var(--gray-900);
+    .menu-anchor {
+      position: relative;
+      flex-shrink: 0;
     }
 
     .actions-menu {
       position: absolute;
-      top: calc(100% + 8px);
+      top: calc(100% + 6px);
       right: 0;
-      z-index: 4;
+      z-index: 11;
       display: grid;
-      gap: 8px;
-      min-width: 280px;
-      padding: 10px;
+      gap: 2px;
+      min-width: 220px;
+      padding: 4px;
       border-radius: 8px;
       background: white;
       border: 1px solid var(--gray-200);
       box-shadow:
-        0 0 2px hsla(0, 0%, 0%, 0.15),
-        0 0 4px hsla(0, 0%, 0%, 0.07),
-        0 0 12px hsla(0, 0%, 0%, 0.07);
-    }
-
-    .menu-anchor {
-      position: relative;
+        0 2px 4px rgba(0, 0, 0, 0.04),
+        0 8px 24px rgba(0, 0, 0, 0.08);
     }
 
     .menu-item {
@@ -1316,19 +1430,21 @@ export class PrismApp extends LitElement {
       position: relative;
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 10px;
-      padding: 9px 10px;
-      border-radius: 6px;
+      padding: 7px 10px;
+      border-radius: 5px;
       color: var(--gray-800);
-      background: var(--gray-50);
-      border: 1px solid var(--gray-200);
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
     }
 
     .menu-item:hover {
       background: var(--gray-100);
+    }
+
+    .menu-item-icon {
+      display: inline-flex;
+      color: var(--gray-600);
     }
 
     .file-menu-item input {
@@ -1338,27 +1454,25 @@ export class PrismApp extends LitElement {
       cursor: pointer;
     }
 
-    .brand {
-      font-weight: 700;
-      color: var(--gray-900);
-    }
-
-    .name {
-      color: var(--gray-600);
-    }
-
+    /* ---- Body shell ---- */
     .content {
-      width: min(1160px, calc(100vw - 24px));
+      flex: 1;
+      width: 100%;
+      max-width: 1200px;
       margin: 0 auto;
+      padding: 16px 20px 24px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 340px;
+      grid-template-columns: minmax(0, 1fr);
       gap: 16px;
-      padding-bottom: 20px;
+    }
+
+    .content.has-sidebar {
+      grid-template-columns: minmax(0, 1fr) 340px;
     }
 
     .content-center {
-      display: grid;
-      gap: 10px;
+      display: flex;
+      flex-direction: column;
       min-width: 0;
     }
 
@@ -1370,18 +1484,73 @@ export class PrismApp extends LitElement {
       display: none;
     }
 
+    /* ---- Status bar: thin inline row with · separators ---- */
     .status-bar {
-      display: grid;
-      gap: 10px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-size: 11.5px;
+      color: var(--gray-500);
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--gray-100);
     }
 
-    .conversation-list-header {
+    .status-file {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-file-name {
       color: var(--gray-700);
     }
 
+    .status-sep {
+      color: var(--gray-300);
+    }
+
+    .status-detect {
+      color: var(--gray-600);
+    }
+
+    .metric {
+      color: var(--gray-500);
+    }
+
+    .metric strong {
+      font-weight: 500;
+      color: var(--gray-900);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .status-spacer {
+      flex: 1;
+    }
+
+    .sidechain-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+
+    .sidechain-toggle input {
+      accent-color: var(--blue-700);
+      margin: 0;
+    }
+
+    .filter-summary {
+      margin-bottom: 10px;
+      color: var(--gray-600);
+      font-size: 12px;
+    }
+
+    /* ---- Conversation list ---- */
     .conversation-list {
       display: grid;
-      gap: 20px;
+      gap: 16px;
       grid-template-columns: minmax(0, 1fr);
       align-items: start;
     }
@@ -1393,159 +1562,31 @@ export class PrismApp extends LitElement {
       );
     }
 
-    .conversation-container {
-      position: relative;
-      width: 100%;
-    }
-
-    .conversation-container-meta {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-      margin: 0 0 8px;
-      color: var(--gray-500);
-      font-size: 13px;
-    }
-
-    .conversation-list[data-layout='grid'] .conversation-container-meta {
-      padding-left: 8px;
-    }
-
-    .conversation-index {
-      color: var(--gray-400);
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    .conversation-file {
-      font-size: 12px;
-      line-height: 1.4;
-      color: var(--gray-500);
-      word-break: break-word;
-    }
-
-    .info-row,
-    .metrics-row,
-    .filters {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      color: var(--gray-600);
-    }
-
-    .label {
-      font-size: 12px;
-      color: var(--gray-500);
-    }
-
-    .value {
-      color: var(--gray-800);
-      word-break: break-word;
-    }
-
-    .loader {
-      min-width: 0;
-      display: flex;
-      align-items: center;
-      min-height: 56px;
-      padding: 0 18px;
-      border: 1px solid var(--gray-300);
-      border-radius: 10px;
+    /* ---- Empty state ---- */
+    .empty-state {
+      padding: 40px 24px;
+      border-radius: var(--radius, 8px);
+      border: 1px dashed var(--gray-300);
       background: white;
-      color: var(--gray-600);
-    }
-
-    .pending-files {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .load-staged-button {
-      all: unset;
-      min-width: 96px;
-      min-height: 56px;
-      padding: 0 24px;
-      border-radius: 10px;
-      background: white;
-      color: var(--gray-800);
-      cursor: pointer;
-      font-size: 18px;
-      line-height: 1;
       text-align: center;
-      border: 1px solid var(--gray-300);
     }
 
-    .load-staged-button:disabled {
-      background: var(--gray-100);
-      color: var(--gray-500);
-      cursor: not-allowed;
-    }
-
-    .metric {
-      display: inline-flex;
-      align-items: baseline;
-      gap: 6px;
-      padding-right: 10px;
-      border-right: 1px solid var(--gray-300);
-    }
-
-    .metric:last-child {
-      border-right: none;
-    }
-
-    .metric strong {
-      font-weight: 500;
+    .empty-state-title {
       color: var(--gray-900);
-    }
-
-    .metric small {
-      color: var(--gray-500);
-      font-size: 12px;
-    }
-
-    select,
-    input[type='checkbox'] {
-      accent-color: var(--blue-700);
-    }
-
-    select {
-      min-width: 150px;
-      padding: 6px 8px;
-      border-radius: 5px;
-      border: 1px solid var(--gray-300);
-      background: white;
-      color: var(--gray-800);
-    }
-
-    .filters label {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 14px;
-    }
-
-    .active-filter-summary {
-      color: var(--gray-500);
-      font-size: 13px;
-    }
-
-    .checkbox span {
-      margin: 0;
-    }
-
-    .empty-message {
-      padding: 12px 0;
-      color: var(--gray-600);
-    }
-
-    .empty-title {
-      color: var(--gray-800);
       font-weight: 500;
       margin-bottom: 4px;
+    }
+
+    .empty-state-body {
+      color: var(--gray-600);
+      font-size: 13px;
+    }
+
+    .empty-state code {
+      padding: 1px 5px;
+      background: var(--gray-100);
+      border-radius: 3px;
+      font-size: 12px;
     }
 
     @media (max-width: 980px) {
@@ -1557,33 +1598,20 @@ export class PrismApp extends LitElement {
     @media (max-width: 720px) {
       .header-inner,
       .content {
-        width: min(100vw - 16px, 100%);
+        width: calc(100vw - 16px);
       }
 
-      .header-inner {
-        flex-direction: column;
-        align-items: flex-start;
+      .brand {
+        display: none;
       }
 
-      .header-controls {
-        width: 100%;
-        grid-template-columns: 1fr;
+      .status-row.metrics {
+        gap: 12px;
       }
 
-      .menu-anchor {
-        justify-self: end;
-      }
-
-      .filters,
-      .filters label,
-      select {
-        width: 100%;
-      }
-
-      .actions-menu {
-        left: 0;
-        right: auto;
-        width: min(100vw - 16px, 320px);
+      .sidechain-toggle {
+        margin-left: 0;
+        flex-basis: 100%;
       }
     }
   `;

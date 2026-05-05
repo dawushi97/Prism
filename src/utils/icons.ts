@@ -3,14 +3,25 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import {
   Bot,
   Braces,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Eye,
+  EyeOff,
+  FileJson,
+  GripVertical,
   Languages,
   Menu,
+  Minus,
   MoreHorizontal,
   Settings,
   Share2,
   Type,
+  Upload,
   User,
-  Wrench
+  Wrench,
+  X
 } from 'lucide';
 
 type IconNode = [tag: string, attrs: Record<string, string | number | undefined>][];
@@ -25,7 +36,18 @@ const ICONS = {
   User,
   Bot,
   Wrench,
-  MoreHorizontal
+  MoreHorizontal,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Check,
+  Eye,
+  EyeOff,
+  FileJson,
+  GripVertical,
+  Minus,
+  Upload,
+  X
 } as const satisfies Record<string, IconNode>;
 
 export type IconName = keyof typeof ICONS;
@@ -33,6 +55,7 @@ export type IconName = keyof typeof ICONS;
 export interface IconOptions {
   slashed?: boolean;
   size?: number;
+  strokeWidth?: number;
 }
 
 const attrsToString = (
@@ -49,6 +72,7 @@ export const renderIcon = (
 ): TemplateResult => {
   const node = ICONS[name];
   const size = options.size ?? 16;
+  const strokeWidth = options.strokeWidth ?? 1.75;
   const shapes = node
     .map(([tag, attrs]) => `<${tag} ${attrsToString(attrs)} />`)
     .join('');
@@ -57,7 +81,7 @@ export const renderIcon = (
     : '';
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" ` +
-    `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ` +
+    `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${strokeWidth}" ` +
     `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
     `${shapes}${slash}</svg>`;
   return html`${unsafeHTML(svg)}`;

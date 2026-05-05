@@ -20,15 +20,31 @@ const ALLOWED_TAGS = [
   'h5',
   'h6',
   'hr',
+  'img',
   'li',
   'ol',
   'p',
   'pre',
   'strong',
-  'ul'
+  'ul',
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'tr',
+  'th',
+  'td'
 ];
 
-const ALLOWED_ATTRIBUTES = ['href', 'rel', 'target', 'title'];
+const ALLOWED_ATTRIBUTES = [
+  'href',
+  'rel',
+  'target',
+  'title',
+  'align',
+  'src',
+  'alt'
+];
 
 export const renderMarkdown = (content: string): string => {
   const dirtyHtml = marked.parse(content) as string;

@@ -16,27 +16,21 @@ export class PrismMessageText extends LitElement {
   maxHeight = '100vh';
 
   render() {
+    const cssVar = `--prism-message-max-height: ${this.maxHeight};`;
+
     if (this.shouldRenderMarkdown) {
-      return html`
-        <div
-          class="message-text rendered"
-          data-mode="markdown"
-          style=${`--prism-message-max-height: ${this.maxHeight};`}
-        >
-          ${unsafeHTML(renderMarkdown(this.text))}
-        </div>
-      `;
+      return html`<div
+        class="message-text rendered"
+        data-mode="markdown"
+        style=${cssVar}
+      >${unsafeHTML(renderMarkdown(this.text))}</div>`;
     }
 
-    return html`
-      <div
-        class="message-text plain"
-        data-mode="plain"
-        style=${`--prism-message-max-height: ${this.maxHeight};`}
-      >
-        ${this.text}
-      </div>
-    `;
+    return html`<div
+      class="message-text plain"
+      data-mode="plain"
+      style=${cssVar}
+    >${this.text.replace(/^[\r\n]+|[\r\n]+$/g, '')}</div>`;
   }
 
   static styles = css`
@@ -57,6 +51,10 @@ export class PrismMessageText extends LitElement {
       white-space: pre-wrap;
     }
 
+    .rendered {
+      line-height: 1.45;
+    }
+
     .rendered > :first-child {
       margin-top: 0;
     }
@@ -69,19 +67,54 @@ export class PrismMessageText extends LitElement {
     .rendered ul,
     .rendered ol,
     .rendered blockquote,
-    .rendered pre,
+    .rendered pre {
+      margin: 0 0 0.45em;
+    }
+
     .rendered h1,
     .rendered h2,
     .rendered h3,
     .rendered h4,
     .rendered h5,
     .rendered h6 {
-      margin: 0 0 0.8em;
+      margin: 0.6em 0 0.3em;
+      line-height: 1.3;
+      font-weight: 600;
+    }
+
+    .rendered h1 {
+      font-size: 1.35em;
+    }
+
+    .rendered h2 {
+      font-size: 1.2em;
+    }
+
+    .rendered h3 {
+      font-size: 1.1em;
+    }
+
+    .rendered h4,
+    .rendered h5,
+    .rendered h6 {
+      font-size: 1em;
     }
 
     .rendered ul,
     .rendered ol {
       padding-left: 1.2rem;
+    }
+
+    .rendered li {
+      margin: 0.1em 0;
+    }
+
+    .rendered li > p {
+      margin: 0;
+    }
+
+    .rendered li + li {
+      margin-top: 0.15em;
     }
 
     .rendered blockquote {
@@ -122,6 +155,46 @@ export class PrismMessageText extends LitElement {
 
     .rendered a:hover {
       text-decoration: underline;
+    }
+
+    .rendered table {
+      border-collapse: collapse;
+      width: auto;
+      max-width: 100%;
+      margin: 0 0 0.8em;
+      font-size: 0.95em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .rendered table :is(th, td) {
+      padding: 5px 10px;
+      border: 1px solid var(--gray-200, #e9e9e9);
+      text-align: left;
+      vertical-align: top;
+      line-height: 1.45;
+    }
+
+    .rendered table th {
+      background: var(--gray-50, #fafafa);
+      color: var(--gray-900, #1f1f1f);
+      font-weight: 600;
+    }
+
+    .rendered table tbody tr:nth-child(even) td {
+      background: var(--gray-50, #fafafa);
+    }
+
+    .rendered table :is(th, td)[align='right'] {
+      text-align: right;
+    }
+
+    .rendered table :is(th, td)[align='center'] {
+      text-align: center;
+    }
+
+    .rendered img {
+      max-width: 100%;
+      border-radius: 4px;
     }
   `;
 }

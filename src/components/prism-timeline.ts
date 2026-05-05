@@ -16,6 +16,12 @@ export class PrismTimeline extends LitElement {
   @property({ attribute: false })
   conversation: NormalizedConversation | null = null;
 
+  @property({ type: String })
+  fileName = '';
+
+  @property({ type: Number })
+  conversationIndex = 0;
+
   @property({ attribute: false })
   messages: NormalizedMessage[] = [];
 
@@ -46,75 +52,90 @@ export class PrismTimeline extends LitElement {
     }
 
     return html`
-      <section class="timeline">
+      <article class="timeline">
         <header class="timeline-header">
           <div class="title-block">
-            <p class="eyebrow">Conversation</p>
-            <h2>${this.conversation.title}</h2>
+            <div class="meta-line">
+              <span class="meta-index">#${this.conversationIndex}</span>
+              <span class="meta-sep">·</span>
+              <span class="meta-file">${this.fileName}</span>
+            </div>
+            <div class="title">${this.conversation.title}</div>
           </div>
           <div class="actions" aria-label="conversation actions">
             ${this.#renderActionButton(
               'toggleMarkdown',
-              renderIcon('Type', { slashed: !this.renderMarkdown }),
+              renderIcon('Type', { slashed: !this.renderMarkdown, size: 14 }),
               this.renderMarkdown
                 ? 'Disable markdown rendering'
                 : 'Enable markdown rendering'
             )}
             ${this.#renderActionButton(
               'translateConversation',
-              renderIcon('Languages'),
+              renderIcon('Languages', { size: 14 }),
               'Translate conversation'
             )}
             ${this.#renderActionButton(
               'toggleMetadata',
-              renderIcon('Braces'),
+              renderIcon('Braces', { size: 14 }),
               'Toggle metadata panel'
             )}
-            ${this.#renderActionButton(
-              'toggleShareMenu',
-              renderIcon('Share2'),
-              'Share'
-            )}
+            <div class="share-anchor">
+              ${this.#renderShareToggle()}
+              ${this.showShareMenu
+                ? html`
+                    <div
+                      class="share-menu"
+                      @click=${(event: Event) => event.stopPropagation()}
+                    >
+                      ${this.#renderShareItem(
+                        'copyShareableUrl',
+                        'Copy shareable URL'
+                      )}
+                      ${this.#renderShareItem(
+                        'copyConversationJson',
+                        'Copy conversation JSON'
+                      )}
+                      ${this.#renderShareItem('downloadConversation', 'Download')}
+                      ${this.#renderShareItem(
+                        'openRenderView',
+                        'Claude render view'
+                      )}
+                    </div>
+                  `
+                : null}
+            </div>
           </div>
         </header>
-        ${this.showShareMenu
-          ? html`
-              <div class="share-menu">
-                ${this.#renderActionButton('copyShareableUrl', 'Copy shareable URL')}
-                ${this.#renderActionButton(
-                  'copyConversationJson',
-                  'Copy conversation JSON'
-                )}
-                ${this.#renderActionButton('downloadConversation', 'Download')}
-                ${this.#renderActionButton('openRenderView', 'Claude render view')}
-              </div>
-            `
-          : null}
+
         ${this.actionStatus
           ? html`<div class="action-status">${this.actionStatus}</div>`
           : null}
+
         <div class="stack">
-          ${this.messages.map(
-            message =>
-              this.hiddenMessageIds.includes(message.id)
-                ? html`
-                    <prism-message-hidden
-                      .message=${message}
-                      .showAbsoluteTimestamp=${this.showAbsoluteTimestamp}
-                    ></prism-message-hidden>
-                  `
-                : html`
-                    <prism-message-card
-                      .message=${message}
-                      ?selected=${message.id === this.selectedMessageId}
-                      .renderMarkdown=${this.renderMarkdown}
-                      .showAbsoluteTimestamp=${this.showAbsoluteTimestamp}
-                      .maxMessageHeight=${this.maxMessageHeight}
-                    ></prism-message-card>
-                  `
-          )}
+          ${this.messages.length === 0
+            ? html`<div class="empty-stack">
+                No messages match the current focus filters.
+              </div>`
+            : this.messages.map(message =>
+                this.hiddenMessageIds.includes(message.id)
+                  ? html`
+                      <prism-message-hidden
+                        .message=${message}
+                      ></prism-message-hidden>
+                    `
+                  : html`
+                      <prism-message-card
+                        .message=${message}
+                        ?selected=${message.id === this.selectedMessageId}
+                        .renderMarkdown=${this.renderMarkdown}
+                        .showAbsoluteTimestamp=${this.showAbsoluteTimestamp}
+                        .maxMessageHeight=${this.maxMessageHeight}
+                      ></prism-message-card>
+                    `
+              )}
         </div>
-      </section>
+      </article>
     `;
   }
 
@@ -125,11 +146,44 @@ export class PrismTimeline extends LitElement {
   ) {
     return html`
       <button
+        class="icon-btn"
+        type="button"
         name=${action}
         aria-label=${ifDefined(ariaLabel)}
         title=${ifDefined(ariaLabel)}
         @click=${() => this.#emitAction(action)}
-      >${content}</button>
+      >
+        ${content}
+      </button>
+    `;
+  }
+
+  #renderShareToggle() {
+    return html`
+      <button
+        class="icon-btn ${this.showShareMenu ? 'is-active' : ''}"
+        type="button"
+        aria-label="Share"
+        title="Share"
+        @click=${(event: Event) => {
+          event.stopPropagation();
+          this.#emitAction('toggleShareMenu');
+        }}
+      >
+        ${renderIcon('Share2', { size: 14 })}
+      </button>
+    `;
+  }
+
+  #renderShareItem(action: PrismConversationAction, label: string) {
+    return html`
+      <button
+        class="share-item"
+        type="button"
+        @click=${() => this.#emitAction(action)}
+      >
+        ${label}
+      </button>
     `;
   }
 
@@ -149,112 +203,147 @@ export class PrismTimeline extends LitElement {
     }
 
     .timeline {
-      display: grid;
-      gap: 10px;
-      background-color: white;
+      background: white;
+      border: 1px solid var(--gray-200);
       border-radius: 10px;
-      padding: 14px 16px 18px;
-      border: 1px solid var(--gray-200, #ebebeb);
+      overflow: hidden;
       box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-    }
-
-    .stack {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: minmax(0, 1fr);
-      align-items: start;
     }
 
     .timeline-header {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       gap: 12px;
-      align-items: flex-start;
-      flex-wrap: wrap;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--gray-100);
     }
 
     .title-block {
       min-width: 0;
+      flex: 1;
     }
 
-    .actions {
+    .meta-line {
       display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: flex-end;
-    }
-
-    .actions button {
-      all: unset;
-      width: 30px;
-      height: 30px;
-      display: inline-grid;
-      place-items: center;
-      border-radius: 999px;
-      border: 1px solid var(--gray-300, #dadada);
-      background: var(--gray-50, #fafafa);
-      color: var(--gray-700, #595959);
-      font-size: 13px;
-      line-height: 1;
-      cursor: pointer;
-    }
-
-    .actions button:hover {
-      background: var(--gray-100, #f5f5f5);
-      color: var(--gray-900, #242424);
-    }
-
-    .share-menu {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: var(--gray-50, #fafafa);
-      border: 1px solid var(--gray-200, #ebebeb);
-    }
-
-    .share-menu button {
-      all: unset;
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--gray-300, #dadada);
-      background: white;
-      color: var(--gray-700, #595959);
-      font-size: 12px;
-      line-height: 1;
-      cursor: pointer;
-    }
-
-    .action-status {
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: var(--gray-50, #fafafa);
-      border: 1px solid var(--gray-200, #ebebeb);
-      color: var(--gray-600, #656565);
-      font-size: 13px;
-    }
-
-    .eyebrow {
-      margin: 0;
-      color: var(--gray-500, #7c7c7c);
-      font-size: 12px;
-    }
-
-    h2 {
-      margin: 2px 0 0;
-      font-size: 16px;
-      line-height: 1.3;
-      color: var(--gray-900, #242424);
+      align-items: center;
+      gap: 6px;
+      font-size: 10.5px;
+      color: var(--gray-500);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
       font-weight: 500;
     }
 
-    .empty {
-      padding: 12px;
+    .meta-sep {
+      color: var(--gray-300);
+    }
+
+    .meta-file {
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--gray-500);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .title {
+      font-size: 14px;
+      color: var(--gray-900);
+      font-weight: 500;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .actions {
+      display: inline-flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .share-anchor {
+      position: relative;
+    }
+
+    .icon-btn {
+      all: unset;
+      box-sizing: border-box;
+      width: 26px;
+      height: 26px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 6px;
+      color: var(--gray-600);
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background 120ms ease, color 120ms ease;
+    }
+
+    .icon-btn:hover,
+    .icon-btn.is-active {
+      background: var(--gray-100);
+      color: var(--gray-900);
+    }
+
+    .icon-btn:focus-visible {
+      outline: 2px solid var(--blue-700);
+      outline-offset: 1px;
+    }
+
+    .share-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      z-index: 10;
+      width: 200px;
+      padding: 4px;
+      background: white;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      box-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.04),
+        0 8px 24px rgba(0, 0, 0, 0.08);
+    }
+
+    .share-item {
+      all: unset;
+      box-sizing: border-box;
+      display: block;
+      width: 100%;
+      padding: 7px 10px;
       border-radius: 5px;
-      background: var(--gray-100, #f5f5f5);
-      border: 1px dashed var(--gray-300, #d4d4d4);
-      color: var(--gray-600, #656565);
+      cursor: pointer;
+      font-size: 12.5px;
+      color: var(--gray-800);
+    }
+
+    .share-item:hover {
+      background: var(--gray-100);
+    }
+
+    .action-status {
+      padding: 6px 14px;
+      font-size: 11.5px;
+      color: var(--gray-600);
+      background: var(--gray-50);
+      border-bottom: 1px solid var(--gray-100);
+    }
+
+    .stack {
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .empty,
+    .empty-stack {
+      padding: 12px;
+      color: var(--gray-500);
+      font-size: 12px;
     }
   `;
 }
