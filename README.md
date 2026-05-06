@@ -2,7 +2,7 @@
 
 Prism is a local-first browser viewer for Claude Code session transcripts. Drop in Claude `.jsonl` files and inspect the full run as a compact timeline with sidechain context, tool calls, markdown rendering, focus filters, and raw metadata.
 
-Live demo: [https://dawushi97.github.io/Prism/](https://dawushi97.github.io/Prism/)
+Live demo: [Prism app](https://dawushi97.github.io/Prism/)
 
 > Inspired by [openai/euphony](https://github.com/openai/euphony), but focused on observed Claude Code session logs rather than Harmony/Codex transcripts.
 
@@ -15,7 +15,7 @@ Live demo: [https://dawushi97.github.io/Prism/](https://dawushi97.github.io/Pris
 - Added markdown rendering with sanitized GFM output.
 - Added metadata inspection for sessions and individual messages.
 - Added sidechain/subagent handling and companion `.meta.json` support.
-- Added a public GitHub Pages entry screen with a Claude Design mock preview.
+- Added a public GitHub Pages build with a preloaded mock session and compact feature overview.
 
 ## Features
 

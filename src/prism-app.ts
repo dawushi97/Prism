@@ -60,19 +60,195 @@ interface ConversationActionStatus {
   message: string;
 }
 
+const DEMO_FILE_NAME = 'mock-session.jsonl';
+const DEMO_SESSION_ID = 'prism-demo-session';
+
+const createDemoRaw = (
+  lineType: string,
+  message: Record<string, unknown>
+): Record<string, unknown> => ({
+  type: lineType,
+  sessionId: DEMO_SESSION_ID,
+  timestamp: message.timestamp,
+  ...message
+});
+
+const createDemoMessage = (
+  id: string,
+  role: PrismRole,
+  channel: PrismChannel,
+  text: string,
+  options: Partial<NormalizedMessage> = {}
+): NormalizedMessage => {
+  const timestamp = options.timestamp ?? '2026-05-06T09:30:00.000Z';
+  const raw = createDemoRaw(options.lineType ?? role, {
+    uuid: id,
+    timestamp,
+    message: {
+      role,
+      content: text
+    },
+    name: options.name,
+    recipient: options.recipient,
+    isSidechain: options.isSidechain ?? false
+  });
+
+  return {
+    id,
+    role,
+    channel,
+    text,
+    timestamp,
+    lineType: options.lineType ?? role,
+    uuid: id,
+    sessionId: DEMO_SESSION_ID,
+    name: options.name,
+    recipient: options.recipient,
+    isSidechain: options.isSidechain ?? false,
+    parentUuid: options.parentUuid ?? null,
+    toolUseId: options.toolUseId,
+    raw,
+    ...options
+  };
+};
+
+const createDemoConversationRecord = (): LoadedConversationRecord => {
+  const messages: NormalizedMessage[] = [
+    createDemoMessage(
+      'demo-user-1',
+      'user',
+      'message',
+      'Review a Claude Code run and find the moments that changed the plan.'
+    ),
+    createDemoMessage(
+      'demo-assistant-1',
+      'assistant',
+      'thinking',
+      'Classify the transcript into user intent, tool work, and sidechain context.',
+      {
+        parentUuid: 'demo-user-1'
+      }
+    ),
+    createDemoMessage(
+      'demo-tool-call-1',
+      'assistant',
+      'tool_call',
+      'rg -n "sessionId|sidechain|metadata" src tests',
+      {
+        name: 'Bash',
+        recipient: 'Bash',
+        parentUuid: 'demo-assistant-1',
+        toolUseId: 'toolu_prism_demo'
+      }
+    ),
+    createDemoMessage(
+      'demo-tool-result-1',
+      'tool',
+      'tool_result',
+      'Found parser, timeline, metadata panel, and focus-mode test coverage.',
+      {
+        parentUuid: 'demo-tool-call-1',
+        toolUseId: 'toolu_prism_demo'
+      }
+    ),
+    createDemoMessage(
+      'demo-sidechain-1',
+      'assistant',
+      'message',
+      'Sidechain note: keep the subagent branch visible, but let Focus Mode collapse it when the reviewer wants the main path.',
+      {
+        isSidechain: true,
+        parentUuid: 'demo-tool-result-1'
+      }
+    ),
+    createDemoMessage(
+      'demo-event-1',
+      'meta',
+      'event',
+      'turn_duration: 18.4s',
+      {
+        lineType: 'turn_duration',
+        parentUuid: 'demo-sidechain-1'
+      }
+    ),
+    createDemoMessage(
+      'demo-assistant-2',
+      'assistant',
+      'message',
+      'Prism highlights the timeline, raw metadata, markdown toggle, sidechain filter, focus controls, and export actions in one local browser surface.',
+      {
+        parentUuid: 'demo-event-1'
+      }
+    )
+  ];
+
+  const conversation: NormalizedConversation = {
+    id: DEMO_SESSION_ID,
+    source: 'claude-session',
+    sessionId: DEMO_SESSION_ID,
+    title: 'Review a Claude Code run',
+    startedAt: '2026-05-06T09:30:00.000Z',
+    messages,
+    metadata: {
+      demo: true,
+      project: 'Prism',
+      privacy: 'local browser parsing'
+    }
+  };
+
+  const fileText = messages.map(message => JSON.stringify(message.raw)).join('\n');
+
+  return {
+    key: `${DEMO_FILE_NAME}:${DEMO_SESSION_ID}`,
+    fileName: DEMO_FILE_NAME,
+    fileText,
+    conversation,
+    parseResult: {
+      conversation,
+      stats: {
+        totalMessages: messages.length,
+        toolCalls: 1,
+        toolResults: 1,
+        eventMessages: 1,
+        thinkingMessages: 1,
+        summaryMessages: 0,
+        fileSnapshots: 0,
+        queueOperations: 0,
+        progressEvents: 0,
+        compactBoundaries: 0,
+        branchPoints: 1,
+        conversationBranchPoints: 0,
+        progressForks: 0,
+        titleEvents: 0,
+        metadataEvents: 1,
+        malformedLines: 0,
+        hasSidechain: true,
+        hasCompact: false,
+        hasToolUseResult: true
+      },
+      warnings: []
+    }
+  };
+};
+
 @customElement('prism-app')
 export class PrismApp extends LitElement {
   @state()
   private stagedFiles: LoadedTextFile[] = [];
 
   @state()
-  private loadedFileNames: string[] = [];
+  private loadedFileNames: string[] = [DEMO_FILE_NAME];
 
   @state()
-  private detectionLabel = 'No file loaded';
+  private detectionLabel = 'Mock Claude session';
 
   @state()
-  private loadedConversations: LoadedConversationRecord[] = [];
+  private loadedConversations: LoadedConversationRecord[] = [
+    createDemoConversationRecord()
+  ];
+
+  @state()
+  private showingDemoSession = true;
 
   @state()
   private selectedMessageRef: SelectedMessageRef | null = null;
@@ -143,13 +319,20 @@ export class PrismApp extends LitElement {
     const parsedSessions = this.#parseConversationFiles(files, parsedMetaFiles);
 
     if (parsedSessions.length > 0) {
+      const existingFileNames = this.showingDemoSession
+        ? []
+        : this.loadedFileNames;
+      if (this.showingDemoSession) {
+        this.loadedConversations = [];
+      }
       this.loadedConversations = this.#mergeLoadedConversations(parsedSessions);
       this.loadedFileNames = [
         ...new Set([
-          ...this.loadedFileNames,
+          ...existingFileNames,
           ...files.map(file => file.name)
         ])
       ];
+      this.showingDemoSession = false;
       this.#pruneMessageKeyState();
       this.metaSummary = null;
       this.selectedMessageRef = null;
@@ -159,6 +342,7 @@ export class PrismApp extends LitElement {
     }
 
     this.loadedConversations = [];
+    this.showingDemoSession = false;
     this.selectedMessageRef = null;
     this.metadataConversationKey = null;
     this.shareMenuConversationKey = null;
@@ -300,6 +484,12 @@ export class PrismApp extends LitElement {
         <div class="content ${showSidebar ? 'has-sidebar' : ''}">
           <section class="content-center">
             ${hasLoadedSession
+              ? this.showingDemoSession
+                ? this.#renderDemoOverview()
+                : nothing
+              : nothing}
+
+            ${hasLoadedSession
               ? html`
                   <div class="status-bar">
                     <span class="status-file">
@@ -422,7 +612,13 @@ export class PrismApp extends LitElement {
                     </section>
                   `
                 : html`
-                    ${this.#renderIntroState()}
+                    <section class="empty-state">
+                      <div class="empty-state-title">No session loaded</div>
+                      <div class="empty-state-body">
+                        Drop Claude Code <code>.jsonl</code> files into the
+                        header, or choose files from the actions menu.
+                      </div>
+                    </section>
                   `
               : nothing}
 
@@ -465,54 +661,50 @@ export class PrismApp extends LitElement {
     `;
   }
 
-  #renderIntroState() {
+  #renderDemoOverview() {
+    const features = [
+      ['Timeline', 'Read user, assistant, tool, thinking, and event messages in order.'],
+      ['Focus Mode', 'Include or exclude roles, tools, and content types.'],
+      ['Metadata', 'Inspect raw session and message JSON without leaving the timeline.'],
+      ['Markdown', 'Toggle sanitized markdown rendering for assistant text.'],
+      ['Sidechain', 'Keep subagent branches visible and filter them when needed.'],
+      ['Export', 'Copy JSON, download a session, or open a clean render view.']
+    ];
+
     return html`
-      <section class="intro-state">
-        <div class="intro-copy">
-          <div class="intro-kicker">Claude Code Session Viewer</div>
-          <h1>Inspect Claude Code transcripts without leaving the browser.</h1>
+      <section class="demo-overview">
+        <div class="demo-copy">
+          <div class="demo-kicker">What this app does</div>
+          <h1>Prism reads Claude Code JSONL sessions.</h1>
           <p>
-            Prism turns local Claude JSONL sessions into compact timelines for
-            reviewing prompts, tool calls, sidechain work, markdown, and raw
-            message metadata.
+            It turns local transcripts into a review surface for tracing the
+            run, checking tool work, comparing sidechain branches, and opening
+            raw metadata when the timeline is not enough.
           </p>
-          <div class="intro-actions">
-            <button
-              class="intro-primary"
-              type="button"
-              @click=${this.#handleActionsToggle}
-            >
-              Load a session
-            </button>
-      <span class="intro-hint"
-        >Drop one or more <code>.jsonl</code> files into the header.</span
-      >
-          </div>
         </div>
 
-        <div class="intro-preview" aria-label="Claude Design mock preview">
-          <div class="preview-topline">
-            <span>Claude Design mock</span>
-            <span>session.jsonl</span>
-          </div>
-          <div class="preview-row user">
-            <span class="preview-role">user</span>
-            <span>Why did this agent branch into a sidechain?</span>
-          </div>
-          <div class="preview-row assistant">
-            <span class="preview-role">assistant</span>
-            <span>Trace the parent UUID, isolate tool calls, then compare the subagent timeline.</span>
-          </div>
-          <div class="preview-row tool">
-            <span class="preview-role">Bash</span>
-            <span>git status --short --branch</span>
-          </div>
-          <div class="preview-metrics">
-            <span><strong>287</strong> messages</span>
-            <span><strong>51</strong> tool calls</span>
-            <span><strong>115</strong> events</span>
-          </div>
+        <div class="demo-actions">
+          <button
+            class="demo-load"
+            name="openLoadMenu"
+            type="button"
+            @click=${this.#handleActionsToggle}
+          >
+            Load local files
+          </button>
+          <span>Your files stay in the browser.</span>
         </div>
+
+        <ul class="demo-features" aria-label="Prism features">
+          ${features.map(
+            ([title, body]) => html`
+              <li>
+                <strong>${title}</strong>
+                <span>${body}</span>
+              </li>
+            `
+          )}
+        </ul>
       </section>
     `;
   }
@@ -1635,61 +1827,62 @@ export class PrismApp extends LitElement {
       font-size: 12px;
     }
 
-    /* ---- Intro state: compact product overview for the public Pages build ---- */
-    .intro-state {
-      min-height: calc(100svh - var(--header-height) - 72px);
+    /* ---- Demo overview: compact product context above the mock session ---- */
+    .demo-overview {
       display: grid;
-      grid-template-columns: minmax(0, 0.92fr) minmax(320px, 1.08fr);
-      align-items: center;
-      gap: 48px;
-      padding: 52px 0 44px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px 28px;
+      padding: 2px 0 14px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--gray-100);
     }
 
-    .intro-copy {
-      max-width: 520px;
+    .demo-copy {
+      min-width: 0;
     }
 
-    .intro-kicker {
-      margin-bottom: 14px;
+    .demo-kicker {
+      margin-bottom: 5px;
       color: var(--gray-500);
       font-size: 11px;
       font-weight: 600;
-      letter-spacing: 0.08em;
       text-transform: uppercase;
     }
 
-    .intro-copy h1 {
+    .demo-copy h1 {
       margin: 0;
       color: var(--gray-900);
-      font-size: 56px;
-      line-height: 0.95;
-      font-weight: 700;
+      font-size: 18px;
+      line-height: 1.25;
+      font-weight: 650;
       letter-spacing: 0;
     }
 
-    .intro-copy p {
-      margin: 18px 0 0;
-      max-width: 460px;
+    .demo-copy p {
+      margin: 6px 0 0;
+      max-width: 760px;
       color: var(--gray-600);
-      font-size: 15px;
-      line-height: 1.65;
+      font-size: 13px;
+      line-height: 1.5;
     }
 
-    .intro-actions {
+    .demo-actions {
       display: flex;
       align-items: center;
-      gap: 14px;
+      justify-content: flex-end;
+      gap: 10px;
       flex-wrap: wrap;
-      margin-top: 26px;
+      color: var(--gray-500);
+      font-size: 12px;
     }
 
-    .intro-primary {
+    .demo-load {
       all: unset;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 34px;
-      padding: 0 14px;
+      min-height: 30px;
+      padding: 0 12px;
       border-radius: 7px;
       background: var(--gray-900);
       color: white;
@@ -1699,92 +1892,44 @@ export class PrismApp extends LitElement {
       transition: background 120ms ease, transform 120ms ease;
     }
 
-    .intro-primary:hover {
+    .demo-load:hover {
       background: var(--gray-800);
       transform: translateY(-1px);
     }
 
-    .intro-primary:focus-visible {
+    .demo-load:focus-visible {
       outline: 2px solid var(--blue-700);
       outline-offset: 2px;
     }
 
-    .intro-hint {
-      color: var(--gray-500);
-      font-size: 12px;
-    }
-
-    .intro-hint code {
-      padding: 1px 5px;
-      border-radius: 4px;
-      background: var(--gray-100);
-      color: var(--gray-700);
-      font-size: 11px;
-    }
-
-    .intro-preview {
-      border: 1px solid var(--gray-200);
-      border-radius: 10px;
-      background: white;
-      box-shadow:
-        0 1px 2px rgba(15, 23, 42, 0.04),
-        0 18px 54px rgba(15, 23, 42, 0.08);
-      overflow: hidden;
-    }
-
-    .preview-topline,
-    .preview-metrics {
-      display: flex;
-      justify-content: space-between;
-      gap: 14px;
-      padding: 10px 12px;
-      color: var(--gray-500);
-      font-size: 11px;
-      border-bottom: 1px solid var(--gray-100);
-    }
-
-    .preview-topline span:first-child {
-      color: var(--gray-800);
-      font-weight: 600;
-    }
-
-    .preview-row {
+    .demo-features {
+      grid-column: 1 / -1;
       display: grid;
-      grid-template-columns: 82px minmax(0, 1fr);
-      gap: 12px;
-      padding: 14px 12px;
-      border-bottom: 1px solid var(--gray-100);
-      color: var(--gray-700);
-      font-size: 13px;
-      line-height: 1.45;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0;
+      margin: 4px 0 0;
+      padding: 8px 0 0;
+      list-style: none;
+      border-top: 1px solid var(--gray-100);
     }
 
-    .preview-row.assistant {
-      background: var(--gray-50);
+    .demo-features li {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+      padding: 7px 16px 7px 0;
     }
 
-    .preview-row.tool {
-      color: var(--gray-600);
-      font-family: 'JetBrains Mono', ui-monospace, monospace;
-      font-size: 12px;
-    }
-
-    .preview-role {
-      color: var(--gray-500);
-      font-family: 'JetBrains Mono', ui-monospace, monospace;
-      font-size: 11px;
-      text-transform: uppercase;
-    }
-
-    .preview-metrics {
-      border-bottom: 0;
-      color: var(--gray-500);
-      background: var(--gray-50);
-    }
-
-    .preview-metrics strong {
+    .demo-features strong {
       color: var(--gray-900);
-      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .demo-features span {
+      color: var(--gray-600);
+      font-size: 12px;
+      line-height: 1.45;
     }
 
     @media (max-width: 980px) {
@@ -1792,14 +1937,16 @@ export class PrismApp extends LitElement {
         grid-template-columns: 1fr;
       }
 
-      .intro-state {
+      .demo-overview {
         grid-template-columns: 1fr;
-        gap: 28px;
-        align-items: start;
       }
 
-      .intro-copy h1 {
-        font-size: 48px;
+      .demo-actions {
+        justify-content: flex-start;
+      }
+
+      .demo-features {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
 
@@ -1822,21 +1969,13 @@ export class PrismApp extends LitElement {
         flex-basis: 100%;
       }
 
-      .intro-state {
-        min-height: auto;
-        padding: 30px 0 24px;
-      }
-
-      .intro-copy h1 {
-        font-size: 38px;
-      }
-
-      .preview-row {
+      .demo-features {
         grid-template-columns: 1fr;
       }
 
-      .preview-metrics {
+      .demo-actions {
         flex-direction: column;
+        align-items: flex-start;
         gap: 4px;
       }
     }

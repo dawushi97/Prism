@@ -196,18 +196,22 @@ const openShareMenu = async (app: PrismApp, index = 0) => {
 };
 
 describe('prism-app', () => {
-  test('renders a public project intro before a session is loaded', async () => {
+  test('preloads a mock session with a compact project overview', async () => {
     const app = await mountApp();
 
     const rootText = normalizeText(app.shadowRoot?.textContent);
 
-    expect(rootText).toContain('Inspect Claude Code transcripts');
-    expect(rootText).toContain('Claude Design mock');
-    expect(rootText).toContain('Load a session');
-    expect(getTimelines(app)).toHaveLength(0);
+    expect(rootText).toContain('Prism reads Claude Code JSONL sessions');
+    expect(rootText).toContain('Timeline');
+    expect(rootText).toContain('Focus Mode');
+    expect(rootText).toContain('Metadata');
+    expect(rootText).toContain('Export');
+    expect(rootText).toContain('mock-session.jsonl');
+    expect(getTimelines(app)).toHaveLength(1);
+    expect(getTimelineText(getTimeline(app))).toContain('Review a Claude Code run');
 
     const loadSession = app.shadowRoot?.querySelector(
-      'button.intro-primary'
+      'button[name="openLoadMenu"]'
     ) as HTMLButtonElement;
     loadSession.click();
     await app.updateComplete;
@@ -397,7 +401,8 @@ describe('prism-app', () => {
     const rootTextBeforeLoad = app.shadowRoot?.textContent ?? '';
     expect(normalizeText(rootTextBeforeLoad)).toContain('1 file staged');
     expect(rootTextBeforeLoad).toContain('main-session.jsonl');
-    expect(rootTextBeforeLoad).toContain('Click Load');
+    expect(rootTextBeforeLoad).toContain('mock-session.jsonl');
+    expect(getTimelineText(getTimeline(app))).toContain('Review a Claude Code run');
 
     const loadButton = app.shadowRoot?.querySelector(
       'button.header-btn.load'
@@ -411,6 +416,7 @@ describe('prism-app', () => {
     const rootTextAfterLoad = app.shadowRoot?.textContent ?? '';
     expect(rootTextAfterLoad).toContain('Claude session JSONL');
     expect(rootTextAfterLoad).toContain('main-session.jsonl');
+    expect(rootTextAfterLoad).not.toContain('mock-session.jsonl');
     expect(rootTextAfterLoad).not.toContain('file staged');
   });
 
