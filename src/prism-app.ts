@@ -422,13 +422,7 @@ export class PrismApp extends LitElement {
                     </section>
                   `
                 : html`
-                    <section class="empty-state">
-                      <div class="empty-state-title">No session loaded</div>
-                      <div class="empty-state-body">
-                        Drop a Claude <code>.jsonl</code> file in the header
-                        above, or use the menu to load local files.
-                      </div>
-                    </section>
+                    ${this.#renderIntroState()}
                   `
               : nothing}
 
@@ -468,6 +462,58 @@ export class PrismApp extends LitElement {
           </aside>
         </div>
       </div>
+    `;
+  }
+
+  #renderIntroState() {
+    return html`
+      <section class="intro-state">
+        <div class="intro-copy">
+          <div class="intro-kicker">Claude Code Session Viewer</div>
+          <h1>Inspect Claude Code transcripts without leaving the browser.</h1>
+          <p>
+            Prism turns local Claude JSONL sessions into compact timelines for
+            reviewing prompts, tool calls, sidechain work, markdown, and raw
+            message metadata.
+          </p>
+          <div class="intro-actions">
+            <button
+              class="intro-primary"
+              type="button"
+              @click=${this.#handleActionsToggle}
+            >
+              Load a session
+            </button>
+      <span class="intro-hint"
+        >Drop one or more <code>.jsonl</code> files into the header.</span
+      >
+          </div>
+        </div>
+
+        <div class="intro-preview" aria-label="Claude Design mock preview">
+          <div class="preview-topline">
+            <span>Claude Design mock</span>
+            <span>session.jsonl</span>
+          </div>
+          <div class="preview-row user">
+            <span class="preview-role">user</span>
+            <span>Why did this agent branch into a sidechain?</span>
+          </div>
+          <div class="preview-row assistant">
+            <span class="preview-role">assistant</span>
+            <span>Trace the parent UUID, isolate tool calls, then compare the subagent timeline.</span>
+          </div>
+          <div class="preview-row tool">
+            <span class="preview-role">Bash</span>
+            <span>git status --short --branch</span>
+          </div>
+          <div class="preview-metrics">
+            <span><strong>287</strong> messages</span>
+            <span><strong>51</strong> tool calls</span>
+            <span><strong>115</strong> events</span>
+          </div>
+        </div>
+      </section>
     `;
   }
 
@@ -1589,9 +1635,171 @@ export class PrismApp extends LitElement {
       font-size: 12px;
     }
 
+    /* ---- Intro state: compact product overview for the public Pages build ---- */
+    .intro-state {
+      min-height: calc(100svh - var(--header-height) - 72px);
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(320px, 1.08fr);
+      align-items: center;
+      gap: 48px;
+      padding: 52px 0 44px;
+    }
+
+    .intro-copy {
+      max-width: 520px;
+    }
+
+    .intro-kicker {
+      margin-bottom: 14px;
+      color: var(--gray-500);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .intro-copy h1 {
+      margin: 0;
+      color: var(--gray-900);
+      font-size: 56px;
+      line-height: 0.95;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .intro-copy p {
+      margin: 18px 0 0;
+      max-width: 460px;
+      color: var(--gray-600);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .intro-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 26px;
+    }
+
+    .intro-primary {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      padding: 0 14px;
+      border-radius: 7px;
+      background: var(--gray-900);
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease, transform 120ms ease;
+    }
+
+    .intro-primary:hover {
+      background: var(--gray-800);
+      transform: translateY(-1px);
+    }
+
+    .intro-primary:focus-visible {
+      outline: 2px solid var(--blue-700);
+      outline-offset: 2px;
+    }
+
+    .intro-hint {
+      color: var(--gray-500);
+      font-size: 12px;
+    }
+
+    .intro-hint code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--gray-100);
+      color: var(--gray-700);
+      font-size: 11px;
+    }
+
+    .intro-preview {
+      border: 1px solid var(--gray-200);
+      border-radius: 10px;
+      background: white;
+      box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 18px 54px rgba(15, 23, 42, 0.08);
+      overflow: hidden;
+    }
+
+    .preview-topline,
+    .preview-metrics {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 10px 12px;
+      color: var(--gray-500);
+      font-size: 11px;
+      border-bottom: 1px solid var(--gray-100);
+    }
+
+    .preview-topline span:first-child {
+      color: var(--gray-800);
+      font-weight: 600;
+    }
+
+    .preview-row {
+      display: grid;
+      grid-template-columns: 82px minmax(0, 1fr);
+      gap: 12px;
+      padding: 14px 12px;
+      border-bottom: 1px solid var(--gray-100);
+      color: var(--gray-700);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .preview-row.assistant {
+      background: var(--gray-50);
+    }
+
+    .preview-row.tool {
+      color: var(--gray-600);
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 12px;
+    }
+
+    .preview-role {
+      color: var(--gray-500);
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .preview-metrics {
+      border-bottom: 0;
+      color: var(--gray-500);
+      background: var(--gray-50);
+    }
+
+    .preview-metrics strong {
+      color: var(--gray-900);
+      font-variant-numeric: tabular-nums;
+    }
+
     @media (max-width: 980px) {
       .content {
         grid-template-columns: 1fr;
+      }
+
+      .intro-state {
+        grid-template-columns: 1fr;
+        gap: 28px;
+        align-items: start;
+      }
+
+      .intro-copy h1 {
+        font-size: 48px;
       }
     }
 
@@ -1612,6 +1820,24 @@ export class PrismApp extends LitElement {
       .sidechain-toggle {
         margin-left: 0;
         flex-basis: 100%;
+      }
+
+      .intro-state {
+        min-height: auto;
+        padding: 30px 0 24px;
+      }
+
+      .intro-copy h1 {
+        font-size: 38px;
+      }
+
+      .preview-row {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-metrics {
+        flex-direction: column;
+        gap: 4px;
       }
     }
   `;

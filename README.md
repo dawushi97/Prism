@@ -1,158 +1,132 @@
 # Prism: Claude Code Session Viewer
 
-Visualize Claude Code sessions in your browser
+Prism is a local-first browser viewer for Claude Code session transcripts. Drop in Claude `.jsonl` files and inspect the full run as a compact timeline with sidechain context, tool calls, markdown rendering, focus filters, and raw metadata.
 
-> Inspired by [openai/euphony](https://github.com/openai/euphony) — a Harmony Chat and Codex Session Viewer. Prism adapts the same idea for the Claude Code ecosystem: drop in one or more session JSONL files and instantly explore the full conversation timeline.
+Live demo: [https://dawushi97.github.io/Prism/](https://dawushi97.github.io/Prism/)
+
+> Inspired by [openai/euphony](https://github.com/openai/euphony), but focused on observed Claude Code session logs rather than Harmony/Codex transcripts.
+
+## What Changed Recently
+
+- Redesigned the app shell around a compact flat UI.
+- Added multi-conversation rendering with list and grid layouts.
+- Added a draggable Preferences panel with max message height, layout, timestamp, and focus controls.
+- Added tri-state Focus Mode for author, recipient, and content type filtering.
+- Added markdown rendering with sanitized GFM output.
+- Added metadata inspection for sessions and individual messages.
+- Added sidechain/subagent handling and companion `.meta.json` support.
+- Added a public GitHub Pages entry screen with a Claude Design mock preview.
 
 ## Features
 
 | Feature | What it does |
-|---------|-------------|
-| Claude session parser | Parses Claude Code JSONL session logs into a normalized conversation timeline. |
-| Message timeline | Renders user, assistant, tool call, tool result, thinking, and system event messages with role-colored rails and chips. |
-| Multi-conversation view | Renders every loaded conversation at once, with list and grid layouts for dataset-style skimming. |
-| Sidechain detection | Identifies and labels subagent / sidechain messages for multi-agent sessions. |
-| Flexible loading | Loads one or more local `.jsonl` files, clipboard paste, or remote HTTP(S) URLs. |
-| Markdown rendering | Toggleable GFM markdown rendering with DOMPurify sanitization. |
-| Focus mode | Tri-state filters by author role, recipient tool, or content type. Normal mode folds non-matching messages; strict focus hides them entirely. |
-| Metadata inspection | Side panel showing session ID, timestamps, message counts, tool call stats, and full raw JSON for any selected message. |
-| Share & export | Copy a shareable URL, copy conversation JSON, or download the session. |
-| Subagent meta support | Reads companion `.meta.json` files to display agent ID, type, and description. |
-| Preferences | Floating preference panel with drag, manual close, max message height, layout controls, and focus settings. |
+| --- | --- |
+| Claude session parser | Parses Claude Code JSONL logs into normalized conversations. |
+| Timeline viewer | Renders user, assistant, tool call, tool result, thinking, and event messages. |
+| Multi-session workspace | Loads several JSONL files and keeps each conversation visible. |
+| Sidechain awareness | Labels and filters subagent / sidechain messages. |
+| Local file loading | Supports drag-and-drop and local file selection for `.jsonl` and companion `.meta.json` files. |
+| Markdown toggle | Switches assistant text between plain text and sanitized markdown. |
+| Focus Mode | Includes or excludes messages by role, recipient tool, or content type. |
+| Metadata sidebar | Shows message/session raw JSON, counts, warnings, and metadata. |
+| Share and export | Copies shareable URLs or conversation JSON, downloads sessions, and opens a render view. |
+| GitHub Pages deploy | Builds with Vite and deploys `dist/` through GitHub Actions. |
 
 ## Tech Stack
 
-- [Lit](https://lit.dev/) — Web Components
+- [Lit](https://lit.dev/) for Web Components
 - [TypeScript](https://www.typescriptlang.org/)
-- [Vite](https://vite.dev/) — Build tool & dev server
-- [Marked](https://marked.js.org/) + [DOMPurify](https://github.com/cure53/DOMPurify) — Markdown rendering
-- [Lucide](https://lucide.dev/) — Icons
-- [Vitest](https://vitest.dev/) — Testing
+- [Vite](https://vite.dev/) for dev/build
+- [Marked](https://marked.js.org/) and [DOMPurify](https://github.com/cure53/DOMPurify) for markdown
+- [Lucide](https://lucide.dev/) icons
+- [Vitest](https://vitest.dev/) for parser and UI tests
 
 ## Get Started
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (v18+)
-
-### Install & Run
 
 ```bash
 npm install
 npm run dev
 ```
 
-Visit [http://localhost:5173](http://localhost:5173) — you should see Prism running in your browser.
+Open [http://localhost:5173](http://localhost:5173).
 
-### Load a Session
+## Load A Session
 
-1. Click to upload one or more `.jsonl` files exported from Claude Code (found in `~/.claude/projects/` directories).
-2. Or paste JSONL content directly from the clipboard.
-3. Or provide a public URL to a hosted JSONL file.
+Claude Code session logs are usually stored under Claude project/session directories as `.jsonl` files. In Prism:
 
-Prism auto-detects Claude Code session events and renders the full conversation timeline.
+1. Drop one or more `.jsonl` files into the header drop area.
+2. Or open the actions menu and choose local files.
+3. Click `Load` to parse and render the conversations.
 
-If you load multiple sessions, Prism renders all of them together. `List View` stacks full conversations vertically; `Grid View` places the same full conversation viewers into a shared grid for side-by-side comparison.
-
-### Build for Production
-
-```bash
-npm run build
-```
-
-Static assets are output to `./dist`.
-
-### Run Tests
-
-```bash
-npm test
-```
+If you also have a matching `.meta.json`, load it alongside the JSONL file to populate subagent metadata.
 
 ## Preferences
 
-Prism exposes a floating `Preferences` panel from the top-right menu. The panel is draggable, has a manual close button, and closes when you click away.
+Open Preferences from the settings icon in the header.
 
-### Max Message Height
+- `Max message height`: automatic, no limit, or a custom pixel height.
+- `Layout`: list view or grid view, with grid width synced into `?grid=<width>`.
+- `Message labels`: toggle absolute timestamps.
+- `Focus mode`: include or exclude author roles, recipient tools, and content types.
 
-- `Automatic`: uses the default capped message height.
-- `No Limit`: fully expands message bodies.
-- `Custom Height`: sets a fixed message body max height with the slider / numeric control.
-
-This setting applies inside each conversation timeline, including in grid view.
-
-### Layout
-
-- `List View`: one full conversation per row.
-- `Grid View`: one full conversation per grid cell.
-
-The grid width is adjustable and synced into the URL as `?grid=<width>`, so the current skim layout is shareable.
+The panel is draggable and closes with the close button or `Escape`.
 
 ## Focus Mode
 
-Focus Mode is configured from the `Preferences` panel and works across all loaded conversations.
-
-### Tri-state chips
-
-Each focus chip has three states:
+Focus chips have three states:
 
 - `neutral`: ignored
-- `include`: selected with normal click
+- `include`: selected with click
 - `exclude`: selected with `Shift+Click`
 
-Interaction rules:
+Within one field, multiple includes are ORed. Across fields, active includes are ANDed. Excludes win before includes.
 
-- Click: `neutral -> include -> neutral`
-- `Shift+Click`: `neutral/include -> exclude -> neutral`
+When strict focus is off, non-matching messages stay as folded placeholders. When strict focus is on, non-matching messages are removed from the visible timeline.
 
-### Matching logic
+## Build And Test
 
-- Within the same field, multiple `include` values are ORed. Example: `author = assistant` and `author = tool`.
-- Across different fields, active `include` filters are ANDed. Example: `author = assistant` plus `type = text`.
-- Any `exclude` match wins before `include`.
+```bash
+npm test
+npm run build
+```
 
-Example:
+Production assets are written to `dist/`.
 
-- `author: +assistant`
-- `type: -thinking`
+## Deploy To GitHub Pages
 
-This means assistant messages stay in scope, but assistant `thinking` messages are still treated as excluded.
+The repository includes `.github/workflows/deploy-pages.yml`.
 
-### Normal focus vs strict focus
+On every push to `main`, GitHub Actions:
 
-When `strict focus` is off:
+1. installs dependencies with `npm ci`
+2. builds the app with `npm run build`
+3. uploads `dist/` as a Pages artifact
+4. deploys it to GitHub Pages
 
-- Messages classified as `include` stay expanded.
-- Messages classified as `neutral` or `exclude` remain in the timeline as folded placeholders.
-- Folded messages can still be revealed from the timeline when you want to inspect them.
-
-When `strict focus` is on:
-
-- Only `include` messages remain rendered.
-- `neutral` and `exclude` messages are removed from the visible timeline entirely.
-- This is the best mode for aggressively skimming a dataset or isolating a narrow slice such as `assistant` output without `thinking`.
-
-Important detail:
-
-- If you only configure `exclude` rules and leave all `include` buckets empty, Prism keeps every non-excluded message visible in strict mode and hides only the excluded ones.
+The Vite base is set to `./` so the static assets work from the project Pages path.
 
 ## Architecture
 
-```
+```text
 src/
-├── prism-app.ts               # Root application shell & file loading
-├── types/prism.ts              # Shared type definitions
-├── adapters/claude/parser.ts   # Claude JSONL → NormalizedConversation
+├── prism-app.ts                 # Root application shell, file loading, filters
+├── types/prism.ts               # Shared normalized types
+├── adapters/claude/parser.ts    # Claude JSONL -> NormalizedConversation
 ├── components/
-│   ├── prism-timeline.ts       # Conversation timeline with action bar
-│   ├── prism-message-card.ts   # Individual message card
-│   ├── prism-message-hidden.ts # Collapsed/hidden message placeholder
-│   ├── prism-message-text.ts   # Text renderer (plain / markdown)
-│   ├── prism-metadata-panel.ts # Session & message metadata sidebar
-│   └── prism-preference-panel.ts # Focus mode & view settings
+│   ├── prism-timeline.ts        # Conversation timeline and actions
+│   ├── prism-message-card.ts    # Expanded message renderer
+│   ├── prism-message-hidden.ts  # Folded message placeholder
+│   ├── prism-message-text.ts    # Plain text / markdown renderer
+│   ├── prism-metadata-panel.ts  # Metadata sidebar
+│   └── prism-preference-panel.ts # Preferences and focus controls
 └── utils/
-    ├── markdown.ts             # Marked + DOMPurify pipeline
-    └── icons.ts                # Lucide icon helpers
+    ├── markdown.ts              # Marked + DOMPurify pipeline
+    └── icons.ts                 # Lucide icon helper
 ```
+
+## Privacy
+
+Prism parses files in the browser. The app does not upload your session JSONL files to a server as part of normal use.
 
 ## License
 

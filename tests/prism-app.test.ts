@@ -196,6 +196,27 @@ const openShareMenu = async (app: PrismApp, index = 0) => {
 };
 
 describe('prism-app', () => {
+  test('renders a public project intro before a session is loaded', async () => {
+    const app = await mountApp();
+
+    const rootText = normalizeText(app.shadowRoot?.textContent);
+
+    expect(rootText).toContain('Inspect Claude Code transcripts');
+    expect(rootText).toContain('Claude Design mock');
+    expect(rootText).toContain('Load a session');
+    expect(getTimelines(app)).toHaveLength(0);
+
+    const loadSession = app.shadowRoot?.querySelector(
+      'button.intro-primary'
+    ) as HTMLButtonElement;
+    loadSession.click();
+    await app.updateComplete;
+
+    expect(app.shadowRoot?.querySelector('.actions-menu')?.textContent ?? '').toContain(
+      'Load local files'
+    );
+  });
+
   test('loads a Claude session JSONL and renders summary, timeline, and metadata', async () => {
     const app = await mountApp();
 
