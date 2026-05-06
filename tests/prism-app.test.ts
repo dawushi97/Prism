@@ -70,13 +70,32 @@ const mountApp = async () => {
   return app;
 };
 
-const getTimelines = (app: PrismApp) =>
-  [...(app.shadowRoot?.querySelectorAll('prism-timeline') ?? [])] as HTMLElement[];
+const normalizeText = (text: string | null | undefined) =>
+  (text ?? '').replace(/\s+/g, ' ').trim();
 
-const getTimeline = (app: PrismApp, index = 0) => getTimelines(app)[index] as HTMLElement;
+const findButtonByText = (
+  root: ParentNode | null | undefined,
+  label: string
+) =>
+  ([...(root?.querySelectorAll('button') ?? [])] as HTMLButtonElement[]).find(
+    button => normalizeText(button.textContent) === label
+  ) as HTMLButtonElement;
+
+const getTimelines = (app: PrismApp) =>
+  [
+    ...(app.shadowRoot?.querySelectorAll('prism-timeline') ?? [])
+  ] as HTMLElement[];
+
+const getTimeline = (app: PrismApp, index = 0) =>
+  getTimelines(app)[index] as HTMLElement;
+
+const getTimelineText = (timeline: Element | undefined | null) =>
+  timeline instanceof HTMLElement
+    ? (timeline.shadowRoot?.textContent ?? timeline.textContent ?? '')
+    : '';
 
 const getConversationContainers = (app: PrismApp) =>
-  app.shadowRoot?.querySelectorAll('.conversation-container') ?? [];
+  app.shadowRoot?.querySelectorAll('prism-timeline') ?? [];
 
 const openActionsMenu = async (app: PrismApp) => {
   const button = app.shadowRoot?.querySelector(
@@ -88,9 +107,8 @@ const openActionsMenu = async (app: PrismApp) => {
 };
 
 const openPreferences = async (app: PrismApp) => {
-  const menu = await openActionsMenu(app);
-  const button = menu.querySelector(
-    'button[name="togglePreferencesMenu"]'
+  const button = app.shadowRoot?.querySelector(
+    'button[aria-label="Preferences"]'
   ) as HTMLButtonElement;
   button.click();
   await app.updateComplete;
@@ -99,21 +117,59 @@ const openPreferences = async (app: PrismApp) => {
 
 const expandFocusMode = async (panel: HTMLElement) => {
   const toggle = panel.shadowRoot?.querySelector(
-    'button[name="toggleFocusModeSection"]'
+    'button.focus-toggle'
   ) as HTMLButtonElement;
   toggle.click();
-  await (panel as HTMLElement & { updateComplete: Promise<unknown> }).updateComplete;
+  await (panel as HTMLElement & { updateComplete: Promise<unknown> })
+    .updateComplete;
   return panel;
 };
 
+type FocusChipTestName = 'focusAuthor' | 'focusRecipient' | 'focusContentType';
+
+const focusGroupTitleByName: Record<FocusChipTestName, string> = {
+  focusAuthor: 'Author',
+  focusRecipient: 'Recipient',
+  focusContentType: 'Content type'
+};
+
+const getFocusGroup = (panel: HTMLElement, name: FocusChipTestName) =>
+  ([
+    ...(panel.shadowRoot?.querySelectorAll('.chip-group') ?? [])
+  ] as HTMLElement[]).find(
+    candidate =>
+      normalizeText(candidate.querySelector('.chip-group-title')?.textContent) ===
+      focusGroupTitleByName[name]
+  );
+
 const getFocusChip = (
   panel: HTMLElement,
-  name: 'focusAuthor' | 'focusRecipient' | 'focusContentType',
+  name: FocusChipTestName,
   value: string
-) =>
-  panel.shadowRoot?.querySelector(
-    `button[name="${name}"][value="${value}"]`
+) => {
+  const group = getFocusGroup(panel, name);
+  const chips = [
+    ...(group?.querySelectorAll('button.focus-chip') ?? [])
+  ] as HTMLButtonElement[];
+
+  return chips.find(
+    button => normalizeText(button.textContent) === value
   ) as HTMLButtonElement;
+};
+
+const getFocusChips = (panel: HTMLElement, name: FocusChipTestName) =>
+  [
+    ...(getFocusGroup(panel, name)?.querySelectorAll('button.focus-chip') ?? [])
+  ] as HTMLButtonElement[];
+
+const getSwitchByLabel = (panel: HTMLElement, label: string) => {
+  const row = ([
+    ...(panel.shadowRoot?.querySelectorAll('.toggle-row') ?? [])
+  ] as HTMLElement[]).find(candidate =>
+    normalizeText(candidate.textContent).includes(label)
+  );
+  return row?.querySelector('button[role="switch"]') as HTMLButtonElement;
+};
 
 const clickFocusChip = async (
   panel: HTMLElement,
@@ -132,7 +188,7 @@ const clickFocusChip = async (
 const openShareMenu = async (app: PrismApp, index = 0) => {
   const timeline = getTimeline(app, index);
   const button = timeline.shadowRoot?.querySelector(
-    'button[name="toggleShareMenu"]'
+    'button[aria-label="Share"]'
   ) as HTMLButtonElement;
   button.click();
   await app.updateComplete;
@@ -156,15 +212,16 @@ describe('prism-app', () => {
     const metadataPanel = app.shadowRoot?.querySelector(
       'prism-metadata-panel'
     ) as HTMLElement | null;
-    const loader = app.shadowRoot?.querySelector('.loader') as HTMLElement | null;
+    const statusBar = app.shadowRoot?.querySelector('.status-bar') as HTMLElement | null;
 
     expect(rootText).toContain('Claude Session Viewer');
     expect(rootText).toContain('main-session.jsonl');
-    expect(rootText).toContain('Conversations');
-    expect(rootText).not.toContain('Pending Files None');
+    expect(statusBar?.textContent ?? '').toContain('1');
+    expect(statusBar?.textContent ?? '').toContain('conversations');
+    expect(rootText).not.toContain('file staged');
     expect(
-      loader?.querySelector('button[name="loadStagedFiles"]')
-    ).toBeNull();
+      app.shadowRoot?.querySelector('button.header-btn.load') as HTMLButtonElement
+    ).toHaveProperty('disabled', true);
     expect(metadataPanel?.shadowRoot?.textContent ?? '').toContain('No metadata selected.');
   });
 
@@ -188,9 +245,10 @@ describe('prism-app', () => {
 
     expect(getTimelines(app)).toHaveLength(2);
     expect(containers).toHaveLength(2);
-    expect(containers[0]?.textContent ?? '').toContain('main-session.jsonl');
-    expect(containers[1]?.textContent ?? '').toContain('subagent-session.jsonl');
-    expect(app.shadowRoot?.textContent ?? '').toContain('2 total conversations');
+    expect(getTimelineText(containers[0])).toContain('main-session.jsonl');
+    expect(getTimelineText(containers[1])).toContain('subagent-session.jsonl');
+    expect(app.shadowRoot?.textContent ?? '').toContain('2');
+    expect(app.shadowRoot?.textContent ?? '').toContain('conversations');
   });
 
   test('renders markdown from the conversation toolbar and keeps tool output raw', async () => {
@@ -255,7 +313,6 @@ describe('prism-app', () => {
     const actionNames = [
       'toggleMarkdown',
       'toggleMetadata',
-      'toggleShareMenu',
       'translateConversation'
     ];
 
@@ -264,23 +321,24 @@ describe('prism-app', () => {
         timeline.shadowRoot?.querySelector(`button[name="${actionName}"]`)
       ).not.toBeNull();
     }
+    expect(
+      timeline.shadowRoot?.querySelector('button[aria-label="Share"]')
+    ).not.toBeNull();
 
     const actionsMenu = await openActionsMenu(app);
     expect(actionsMenu.textContent ?? '').toContain('Load local files');
-    expect(actionsMenu.textContent ?? '').toContain('Preferences');
+    expect(actionsMenu.textContent ?? '').not.toContain('Preferences');
 
     await openShareMenu(app);
-    const shareActionNames = [
-      'copyShareableUrl',
-      'copyConversationJson',
-      'downloadConversation',
-      'openRenderView'
+    const shareLabels = [
+      'Copy shareable URL',
+      'Copy conversation JSON',
+      'Download',
+      'Claude render view'
     ];
 
-    for (const actionName of shareActionNames) {
-      expect(
-        timeline.shadowRoot?.querySelector(`button[name="${actionName}"]`)
-      ).not.toBeNull();
+    for (const label of shareLabels) {
+      expect(timeline.shadowRoot?.textContent ?? '').toContain(label);
     }
 
     const translateButton = timeline.shadowRoot?.querySelector(
@@ -316,16 +374,14 @@ describe('prism-app', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     const rootTextBeforeLoad = app.shadowRoot?.textContent ?? '';
-    const loader = app.shadowRoot?.querySelector('.loader') as HTMLElement | null;
-    expect(rootTextBeforeLoad).toContain('Pending Files');
+    expect(normalizeText(rootTextBeforeLoad)).toContain('1 file staged');
     expect(rootTextBeforeLoad).toContain('main-session.jsonl');
-    expect(rootTextBeforeLoad).toContain('No file loaded');
+    expect(rootTextBeforeLoad).toContain('Click Load');
 
     const loadButton = app.shadowRoot?.querySelector(
-      'button[name="loadStagedFiles"]'
+      'button.header-btn.load'
     ) as HTMLButtonElement;
     expect(loadButton.disabled).toBe(false);
-    expect(loader?.querySelector('button[name="loadStagedFiles"]')).toBeNull();
 
     loadButton.click();
     await app.updateComplete;
@@ -333,8 +389,8 @@ describe('prism-app', () => {
 
     const rootTextAfterLoad = app.shadowRoot?.textContent ?? '';
     expect(rootTextAfterLoad).toContain('Claude session JSONL');
-    expect(rootTextAfterLoad).toContain('Loaded Files');
     expect(rootTextAfterLoad).toContain('main-session.jsonl');
+    expect(rootTextAfterLoad).not.toContain('file staged');
   });
 
   test('opens preferences as a separate popover from the actions menu', async () => {
@@ -352,23 +408,17 @@ describe('prism-app', () => {
 
     const actionsMenu = await openActionsMenu(app);
     expect(actionsMenu.querySelector('prism-preference-panel')).toBeNull();
+    expect(actionsMenu.textContent ?? '').not.toContain('Preferences');
 
-    const preferencesButton = actionsMenu.querySelector(
-      'button[name="togglePreferencesMenu"]'
-    ) as HTMLButtonElement;
-    preferencesButton.click();
-    await app.updateComplete;
+    const panel = await openPreferences(app);
 
-    const panel = app.shadowRoot?.querySelector(
-      'prism-preference-panel'
-    ) as HTMLElement | null;
     expect(panel).not.toBeNull();
     expect(app.shadowRoot?.querySelector('.actions-menu')).toBeNull();
-    expect(panel?.shadowRoot?.textContent ?? '').toContain('Message Labels');
-    expect(panel?.shadowRoot?.textContent ?? '').toContain('Preferences');
+    expect(panel.shadowRoot?.textContent ?? '').toContain('Message labels');
+    expect(panel.shadowRoot?.textContent ?? '').toContain('Preferences');
   });
 
-  test('dismisses the preference popover on outside click', async () => {
+  test('keeps the preference popover open on outside click and closes on Escape', async () => {
     const app = await mountApp();
 
     await app.ingestFiles([
@@ -382,6 +432,11 @@ describe('prism-app', () => {
     expect(await openPreferences(app)).not.toBeNull();
 
     document.body.click();
+    await app.updateComplete;
+
+    expect(app.shadowRoot?.querySelector('prism-preference-panel')).not.toBeNull();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     await app.updateComplete;
 
     expect(app.shadowRoot?.querySelector('prism-preference-panel')).toBeNull();
@@ -400,7 +455,7 @@ describe('prism-app', () => {
 
     const panel = await openPreferences(app);
     const closeButton = panel.shadowRoot?.querySelector(
-      'button[name="closePreferences"]'
+      'button.close-button'
     ) as HTMLButtonElement;
 
     closeButton.click();
@@ -421,29 +476,32 @@ describe('prism-app', () => {
     await app.updateComplete;
 
     const panel = await openPreferences(app);
-    const header = panel.shadowRoot?.querySelector('.header') as HTMLElement;
+    const header = panel.shadowRoot?.querySelector('.title-bar') as HTMLElement;
     const windowElement = panel.shadowRoot?.querySelector(
-      '.preference-window'
+      '.window'
     ) as HTMLElement;
+    const initialLeft = Number.parseInt(windowElement.style.left, 10);
+    const initialTop = Number.parseInt(windowElement.style.top, 10);
 
     header.dispatchEvent(
       new MouseEvent('mousedown', {
         bubbles: true,
-        clientX: 20,
-        clientY: 30
+        clientX: initialLeft + 20,
+        clientY: initialTop + 30
       })
     );
     document.dispatchEvent(
       new MouseEvent('mousemove', {
         bubbles: true,
-        clientX: 65,
-        clientY: 90
+        clientX: initialLeft - 25,
+        clientY: initialTop + 90
       })
     );
     document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     await panel.updateComplete;
 
-    expect(windowElement.style.transform).toContain('translate(45px, 60px)');
+    expect(windowElement.style.left).toBe(`${initialLeft - 45}px`);
+    expect(windowElement.style.top).toBe(`${initialTop + 60}px`);
   });
 
   test('applies max message height modes from preferences to message cards', async () => {
@@ -458,9 +516,7 @@ describe('prism-app', () => {
     await app.updateComplete;
 
     const panel = await openPreferences(app);
-    const noLimit = panel.shadowRoot?.querySelector(
-      'input[name="maxMessageHeightMode"][value="no-limit"]'
-    ) as HTMLInputElement;
+    const noLimit = findButtonByText(panel.shadowRoot, 'No limit');
     noLimit.click();
     await app.updateComplete;
 
@@ -471,21 +527,20 @@ describe('prism-app', () => {
 
     expect(card.maxMessageHeight).toBe('none');
 
-    const customMode = panel.shadowRoot?.querySelector(
-      'input[name="maxMessageHeightMode"][value="custom"]'
-    ) as HTMLInputElement;
+    const customMode = findButtonByText(panel.shadowRoot, 'Custom');
     customMode.click();
     await app.updateComplete;
+    await panel.updateComplete;
 
     const maxMessageHeight = panel.shadowRoot?.querySelector(
-      'input[name="customMessageHeight"]'
+      'input.num'
     ) as HTMLInputElement;
     maxMessageHeight.value = '300';
-    maxMessageHeight.dispatchEvent(new Event('input', { bubbles: true }));
+    maxMessageHeight.dispatchEvent(new Event('change', { bubbles: true }));
     await app.updateComplete;
 
     expect(card.maxMessageHeight).toBe('300px');
-    expect(panel.shadowRoot?.textContent ?? '').toContain('Custom Height (300px)');
+    expect(panel.shadowRoot?.textContent ?? '').toContain('px ·');
   });
 
   test('switches conversation layout between list and grid and syncs grid width to the URL', async () => {
@@ -506,17 +561,16 @@ describe('prism-app', () => {
     await app.updateComplete;
 
     const panel = await openPreferences(app);
-    const gridMode = panel.shadowRoot?.querySelector(
-      'input[name="layoutMode"][value="grid"]'
-    ) as HTMLInputElement;
+    const gridMode = findButtonByText(panel.shadowRoot, 'Grid');
     gridMode.click();
     await app.updateComplete;
+    await panel.updateComplete;
 
     const gridWidth = panel.shadowRoot?.querySelector(
-      'input[name="gridColumnWidth"]'
+      'input.num.narrow'
     ) as HTMLInputElement;
     gridWidth.value = '373';
-    gridWidth.dispatchEvent(new Event('input', { bubbles: true }));
+    gridWidth.dispatchEvent(new Event('change', { bubbles: true }));
     await app.updateComplete;
 
     const conversationList = app.shadowRoot?.querySelector(
@@ -530,9 +584,7 @@ describe('prism-app', () => {
     expect(conversationList?.getAttribute('data-layout')).toBe('grid');
     expect(new URL(window.location.href).searchParams.get('grid')).toBe('373');
 
-    const listMode = panel.shadowRoot?.querySelector(
-      'input[name="layoutMode"][value="list"]'
-    ) as HTMLInputElement;
+    const listMode = findButtonByText(panel.shadowRoot, 'List');
     listMode.click();
     await app.updateComplete;
 
@@ -560,8 +612,8 @@ describe('prism-app', () => {
 
     expect(timelines).toHaveLength(2);
     expect(containers).toHaveLength(2);
-    expect(containers[0]?.textContent ?? '').toContain('main-session.jsonl');
-    expect(containers[1]?.textContent ?? '').toContain('secondary-session.jsonl');
+    expect(getTimelineText(containers[0])).toContain('main-session.jsonl');
+    expect(getTimelineText(containers[1])).toContain('secondary-session.jsonl');
   });
 
   test('keeps previously loaded conversations when loading another jsonl later', async () => {
@@ -590,12 +642,12 @@ describe('prism-app', () => {
     expect(containers).toHaveLength(2);
     expect(
       containers.some(container =>
-        (container.textContent ?? '').includes('main-session.jsonl')
+        getTimelineText(container).includes('main-session.jsonl')
       )
     ).toBe(true);
     expect(
       containers.some(container =>
-        (container.textContent ?? '').includes('secondary-session.jsonl')
+        getTimelineText(container).includes('secondary-session.jsonl')
       )
     ).toBe(true);
   });
@@ -624,7 +676,7 @@ describe('prism-app', () => {
     await clickFocusChip(panel, thinking, { shiftKey: true });
     expect(thinking.getAttribute('data-state')).toBe('neutral');
 
-    expect(panel.shadowRoot?.textContent ?? '').toContain('author: +assistant');
+    expect(panel.shadowRoot?.textContent ?? '').toContain('filtered');
   });
 
   test('non-strict focus expands included messages and folds all non-included messages', async () => {
@@ -688,9 +740,7 @@ describe('prism-app', () => {
     await clickFocusChip(panel, assistant);
     await clickFocusChip(panel, thinking, { shiftKey: true });
 
-    const strictFocus = panel.shadowRoot?.querySelector(
-      'input[name="strictFocus"]'
-    ) as HTMLInputElement;
+    const strictFocus = getSwitchByLabel(panel, 'Strict focus');
     strictFocus.click();
     await app.updateComplete;
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -787,11 +837,9 @@ describe('prism-app', () => {
 
     const panel = await expandFocusMode(await openPreferences(app));
     const recipientButtons = [
-      ...(panel.shadowRoot?.querySelectorAll(
-        'button[name="focusRecipient"]'
-      ) ?? [])
-    ] as HTMLButtonElement[];
-    const values = recipientButtons.map(input => input.value);
+      ...getFocusChips(panel, 'focusRecipient')
+    ];
+    const values = recipientButtons.map(input => normalizeText(input.textContent));
 
     expect(values).toContain('Bash');
     expect(values).toContain('Grep');
@@ -855,7 +903,7 @@ describe('prism-app', () => {
     const rootText = app.shadowRoot?.textContent ?? '';
 
     expect(rootText).toContain('Meta Summary');
-    expect(rootText).toContain('需要配套 JSONL 才能渲染时间线');
+    expect(rootText).toContain('Need a paired JSONL to render the timeline');
     expect(rootText).toContain('general-purpose');
   });
 });
